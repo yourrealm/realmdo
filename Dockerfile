@@ -1,0 +1,62 @@
+# realmdo image: one binary (Rust API + embedded web UI) on distroless.
+#
+# Build context is the repo root; .dockerignore narrows it to web/ and server/.
+# Nothing from ../holden enters this image: realm.tsx describes the deployment
+# and never runs in the container.
+#
+# $BUILDPLATFORM + cross-compilation per $TARGETARCH: nothing here executes
+# target code, so both arches build natively on one runner instead of one of
+# them running under QEMU (the Realm updater's recipe). Unlike the updater,
+# rusqlite's bundled sqlite3.c needs a C cross-compiler, hence Debian's
+# gcc-*-linux-gnu packages, glibc targets, and a glibc runtime (distroless/cc).
+
+# --- web: static UI -----------------------------------------------------------
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
+RUN corepack enable && corepack prepare pnpm@10.13.1 --activate
+WORKDIR /web
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ ./
+RUN pnpm build
+
+# --- server: cross-compiled binary --------------------------------------------
+FROM --platform=$BUILDPLATFORM rust:1.96-bookworm AS server
+ARG TARGETARCH
+# Pick the target, and a cross gcc only when the target is not the host arch
+# (Debian ships no gcc-<host>-linux-gnu package). Cargo's linker and cc-rs's
+# compiler are set through /cross.env so the build step below stays cacheable
+# on its own.
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) triple=x86_64-linux-gnu; target=x86_64-unknown-linux-gnu ;; \
+      arm64) triple=aarch64-linux-gnu; target=aarch64-unknown-linux-gnu ;; \
+      *) echo "TARGETARCH is '$TARGETARCH' - build with buildx/BuildKit"; exit 1 ;; \
+    esac; \
+    rustup target add "$target"; \
+    printf 'export RUST_TARGET=%s\n' "$target" > /cross.env; \
+    if [ "$(dpkg --print-architecture)" != "$TARGETARCH" ]; then \
+      apt-get update; \
+      apt-get install -y --no-install-recommends "gcc-$(printf %s "$triple" | tr _ -)"; \
+      rm -rf /var/lib/apt/lists/*; \
+      upper="$(printf %s "$target" | tr a-z- A-Z_)"; \
+      printf 'export CARGO_TARGET_%s_LINKER=%s-gcc\nexport CC_%s=%s-gcc\n' \
+        "$upper" "$triple" "$target" "$triple" >> /cross.env; \
+    fi
+WORKDIR /app
+COPY server/ ./server/
+# rust-embed reads ../web/dist relative to the crate at compile time.
+COPY --from=web /web/dist ./web/dist
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/server/target \
+    set -eux; . /cross.env; \
+    cd server; \
+    cargo build --release --locked --target "$RUST_TARGET"; \
+    cp "target/$RUST_TARGET/release/realmdo" /realmdo
+
+# --- runtime: the binary and glibc, nothing else --------------------------------
+# No shell: the compose healthcheck is exec-form (`/app/realmdo healthcheck`).
+FROM gcr.io/distroless/cc-debian12
+COPY --from=server /realmdo /app/realmdo
+ENV PORT=3000
+EXPOSE 3000
+ENTRYPOINT ["/app/realmdo"]
