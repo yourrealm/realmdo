@@ -36,11 +36,13 @@ RUN set -eux; \
     printf 'export RUST_TARGET=%s\n' "$target" > /cross.env; \
     if [ "$(dpkg --print-architecture)" != "$TARGETARCH" ]; then \
       apt-get update; \
-      apt-get install -y --no-install-recommends "gcc-$(printf %s "$triple" | tr _ -)"; \
+      apt-get install -y --no-install-recommends \
+        "gcc-$(printf %s "$triple" | tr _ -)" "libc6-dev-$TARGETARCH-cross"; \
       rm -rf /var/lib/apt/lists/*; \
       upper="$(printf %s "$target" | tr a-z- A-Z_)"; \
+      lower="$(printf %s "$target" | tr - _)"; \
       printf 'export CARGO_TARGET_%s_LINKER=%s-gcc\nexport CC_%s=%s-gcc\n' \
-        "$upper" "$triple" "$target" "$triple" >> /cross.env; \
+        "$upper" "$triple" "$lower" "$triple" >> /cross.env; \
     fi
 WORKDIR /app
 COPY server/ ./server/

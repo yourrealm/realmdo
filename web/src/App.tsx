@@ -110,6 +110,11 @@ export function App() {
     void run(async () => {});
   }, [run]);
 
+  const remove = useCallback((id: number) => {
+    setEditing(null);
+    void run(() => api.remove(id));
+  }, [run]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement) {
@@ -133,7 +138,7 @@ export function App() {
           if (task) void run(() => api.done(task.id));
           break;
         case "d":
-          if (task) void run(() => api.remove(task.id));
+          if (task) remove(task.id);
           break;
         case "e":
           if (task) setEditing(task.id);
@@ -147,7 +152,7 @@ export function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shown, sel, run, view, editing]);
+  }, [shown, sel, run, remove, view, editing]);
 
   return (
     <main>
@@ -213,22 +218,27 @@ export function App() {
                 />
               </>
             )}
-            {kind === "slot" &&
-              SLOTS.map((slot) => (
-                <label key={slot} className="slot-pick">
-                  <input
-                    type="checkbox"
-                    checked={slots.includes(slot)}
-                    onChange={(e) =>
-                      setSlots(
-                        e.target.checked
-                          ? SLOTS.filter((s) => s === slot || slots.includes(s))
-                          : slots.filter((s) => s !== slot),
-                      )}
-                  />
-                  {SLOT_LABEL[slot]}
-                </label>
-              ))}
+            {kind === "slot" && (
+              <div className="slots">
+                {SLOTS.map((slot) => (
+                  <label key={slot} className="slot-pick">
+                    <input
+                      type="checkbox"
+                      checked={slots.includes(slot)}
+                      onChange={(e) =>
+                        setSlots(
+                          e.target.checked
+                            ? SLOTS.filter((s) =>
+                              s === slot || slots.includes(s)
+                            )
+                            : slots.filter((s) => s !== slot),
+                        )}
+                    />
+                    {SLOT_LABEL[slot]}
+                  </label>
+                ))}
+              </div>
+            )}
             <button type="submit">Add</button>
           </form>
 
@@ -242,6 +252,8 @@ export function App() {
                         task={t}
                         onSaved={saved}
                         onCancel={() => setEditing(null)}
+                        onDelete={() =>
+                          remove(t.id)}
                         onError={onError}
                       />
                     )
@@ -290,6 +302,7 @@ export function App() {
                       task={t}
                       onSaved={saved}
                       onCancel={() => setEditing(null)}
+                      onDelete={() => remove(t.id)}
                       onError={onError}
                     />
                   )

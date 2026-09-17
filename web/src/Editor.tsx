@@ -10,10 +10,11 @@ import {
 
 /** Inline editor for one task. Fields follow the kind; the kind is fixed. */
 export function TaskEditor(
-  { task, onSaved, onCancel, onError }: {
+  { task, onSaved, onCancel, onDelete, onError }: {
     task: Task;
     onSaved: () => void;
     onCancel: () => void;
+    onDelete: () => void;
     onError: (e: unknown) => void;
   },
 ) {
@@ -78,26 +79,34 @@ export function TaskEditor(
           />
         </>
       )}
-      {task.kind === "slot" &&
-        SLOTS.map((slot) => (
-          <label key={slot} className="slot-pick">
-            <input
-              type="checkbox"
-              checked={slots.includes(slot)}
-              onChange={(e) =>
-                setSlots(
-                  e.target.checked
-                    ? SLOTS.filter((s) => s === slot || slots.includes(s))
-                    : slots.filter((s) => s !== slot),
-                )}
-            />
-            {SLOT_LABEL[slot]}
-          </label>
-        ))}
-      <button type="submit">Save</button>
-      <button type="button" className="link" onClick={onCancel}>
-        cancel
-      </button>
+      {task.kind === "slot" && (
+        <div className="slots">
+          {SLOTS.map((slot) => (
+            <label key={slot} className="slot-pick">
+              <input
+                type="checkbox"
+                checked={slots.includes(slot)}
+                onChange={(e) =>
+                  setSlots(
+                    e.target.checked
+                      ? SLOTS.filter((s) => s === slot || slots.includes(s))
+                      : slots.filter((s) => s !== slot),
+                  )}
+              />
+              {SLOT_LABEL[slot]}
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="actions">
+        <button type="submit">Save</button>
+        <button type="button" className="link" onClick={onCancel}>
+          cancel
+        </button>
+        <button type="button" className="link danger" onClick={onDelete}>
+          delete
+        </button>
+      </div>
     </form>
   );
 }
