@@ -15,7 +15,9 @@
     "dev:server": "pnpm -C web build && REALMDO_DATA_DIR=./server/data PORT=${REALMDO_PORT:-3000} cargo run --manifest-path server/Cargo.toml",
     "dev:web": "pnpm -C web dev",
     "build:web": "pnpm -C web build",
-    "build:image": "docker buildx build --platform linux/amd64,linux/arm64 -t benjick/realmdo:latest ."
+    "build:image": "docker buildx build --platform linux/amd64,linux/arm64 -t benjick/realmdo:latest .",
+    "android:build": "cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug",
+    "android:install": "cd android && ./gradlew installDebug"
   },
   "dependencies": {
     "@yourrealm/sdk": "link:../holden/packages/sdk"

@@ -10,16 +10,18 @@ UI), and home-screen widgets. Realm itself lives at `../holden`
 (`/Users/max/dev/holden`). Read that repo's `CLAUDE.md` before touching anything
 here; this file only records what is specific to realmdo.
 
-Status (2026-08-30): layout and toolchains stand and are verified end to end
+Status (2026-09-17): layout and toolchains stand and are verified end to end
 (SDK link, Rust server, web UI, both image arches, container smoke test). All
 three task kinds are built, per user, with urgency computed on read in the
 user's time zone and a completion history. Per-user settings hold the time zone
 and slot start times. Bearer tokens are done (minted under Settings, hashed,
 session-only management). One widget exists (`widgets/tasks.tsx`: ranked list,
 done, add). Tasks are editable (PATCH, inline in the web UI, kind fixed).
-`/public/{secret}/today` serves the TRMNL pull fallback; the push route and the
-Android client are not started. The decisions below are the spec. When one
-changes, change it here.
+`/public/{secret}/today` serves TRMNL, which polls it. The Android client
+(`android/`) is started: token sign-in, ranked list, add, done, and the top task
+pinned as an Android 16 Live Update. It builds and lints; it has not yet been
+run on a device. The decisions below are the spec. When one changes, change it
+here.
 
 ## Where to look in the Realm repo
 
@@ -46,12 +48,14 @@ changes, change it here.
    by `getTrustedHeaders` (username header); the backend creates its local row
    on first request.
 2. **No reminders or notifications here.** They belong to the Android app.
-3. **Mobile** is a thin Android client, built later, against the JSON API. No
-   iOS.
-4. **TRMNL** (e-ink) shows today's list. Prefer push: the backend POSTs merge
-   variables to the TRMNL webhook. That needs `r.host.egress()` and the
-   operator's TRMNL key as a secret config field. Pull via `/public/` is the
-   fallback.
+3. **Mobile** is a thin Android client (`android/`) against the JSON API. No
+   iOS. See "Android, as built".
+4. **TRMNL** (e-ink) shows today's list by polling `/public/{secret}/today` (a
+   private plugin with the Polling strategy). Not the Webhook strategy: the
+   device only ever pulls from TRMNL's cloud on its own schedule, so pushing to
+   that cloud would not update the screen any sooner, and it would cost an
+   egress grant, a stored operator key and a 2 KB payload cap. Decided
+   2026-09-17.
 5. Better, not bigger. No subtasks, no kanban, no projects, no collaboration.
 
 ### Task model
@@ -151,9 +155,13 @@ hidden. Sketch, to be settled against real use:
 1. The backend identifies the caller by `X-Realmdo-User` first, then by
    `Authorization: Bearer rdo_...`. The header wins when both are present: it
    only exists when the gate injected it for a Home session (Caddy strips any
-   client copy, and an anonymous-gate admit carries no brokered identity), so it
-   is the more trustworthy of the two. Home's widget-loader proxy reaches the
-   container directly and stamps the same brokered headers there, next to
+   client copy), so it is the more trustworthy of the two. On an anonymous admit
+   the header is absent, not empty: that is Realm's promise, and since holden
+   `d0c669ff` (2026-09-17) the ingress keeps it. Before that fix Caddy forwarded
+   its unexpanded placeholder as the value and the phone became a user of that
+   name; the backend does not guard against it, so a Realm older than that
+   commit cannot host this app. Home's widget-loader proxy reaches the container
+   directly and stamps the same brokered headers there, next to
    `X-Realm-Widget-PID`, so widgets and pages arrive as their viewer.
    `realm-sdk dev` stamps a synthetic viewer `dev` (admin), the same name the
    Vite proxy uses.
@@ -166,6 +174,52 @@ hidden. Sketch, to be settled against real use:
    every 5 minutes. Minting, listing and revoking require a session
    (`via: "session"`); a token gets 403 there, so a leaked device token cannot
    mint more tokens.
+
+### Android, as built
+
+1. **Plain Kotlin + Jetpack Compose (Material 3)**, no web view, no Capacitor.
+   `me.malm.realmdo`, minSdk 31, target and compile SDK 36, AGP 8.13, Kotlin
+   2.2, Java 17. Dependencies are the Compose BOM, core-ktx, activity-compose
+   and lifecycle; HTTP is `HttpURLConnection` and JSON is `org.json`, so the
+   release APK stays small. No Room, no Retrofit, no WorkManager.
+2. **Auth** is a bearer token from the web UI's Settings, kept in app-private
+   `SharedPreferences` and excluded from backup and device transfer. The app
+   verifies it with `GET /api/me` before saving. Debug builds allow plain http
+   (a dev server at `10.0.2.2:3000`); release is https only.
+3. **Pairing by QR.** Minting a token in the web UI also renders it as a QR code
+   (`qrcode.react`) holding `realmdo://pair?url=<origin>&token=<secret>`. The
+   app reads it two ways: a "Scan QR code" button using Google's code scanner
+   from Play services (no camera permission, no camera UI), and a
+   `realmdo://pair` intent filter so the phone's own camera app can open it.
+   Pasting the token by hand still works.
+4. **Screens:** setup (URL + token), the ranked list (add one-off by title, done
+   per row, refresh on resume) and settings (the Live Update switch, sign out).
+   Tasks below urgency 0 are hidden, like the web UI. Editing and the other
+   kinds are web-only for now.
+5. **The Live Update.** One notification for the top-ranked task, static (no
+   countdown, no bar). Title is the task; the status-bar chip
+   (`shortCriticalText`) is the title cut to about twelve characters; the second
+   line is its standing ("due today", "every 6 d · done 3 d ago", the slot
+   states); the expanded view (BigTextStyle) adds the next three tasks; the
+   small icon says the kind (calendar, repeat, clock). Standard and BigText
+   styles qualify for promotion on Android 16: `setOngoing`,
+   `setRequestPromotedOngoing`, a content title, `POST_PROMOTED_NOTIFICATIONS`
+   in the manifest, channel above minimum importance. Promotion is requested
+   only while the top task is important, so the chip means "something is due";
+   otherwise, and below 16, it is a plain ongoing notification. Lessons from the
+   workout app (`../workout`, `RestNotificationPlugin`): a body `contentIntent`
+   suppresses the One UI chip, so "Open" is an action button; "Done" is a
+   broadcast to `TaskActionReceiver`, which posts the completion and re-posts
+   the next task without opening the app.
+6. **Refresh** is pull only: on app resume, after every mutation, from a
+   15-minute inexact alarm (`setAndAllowWhileIdle`, rescheduled by each fire),
+   and after boot. A failed fetch keeps the notification as it was. No push from
+   the server; that would need a channel the backend does not have.
+7. Root scripts `android:build` and `android:install` wrap `./gradlew`; CI runs
+   `testDebugUnitTest lintDebug assembleDebug` in its own job. JVM tests cover
+   the pairing parser, the labels and the task JSON; they pull the real
+   `org.json` because android.jar only stubs it. `local.properties` points
+   `sdk.dir` at the SDK and is git-ignored.
 
 ### API
 
@@ -209,12 +263,14 @@ widgets/           home-screen widgets, one file each                    } deno.
 package.json       root scripts fan out to all three toolchains
 server/            Rust crate: HTTP API, SQLite, urgency, embeds ../web/dist
 web/               React + Vite UI, its own package.json and lockfile
+android/           Kotlin + Compose client, its own Gradle wrapper
 Dockerfile         context = repo root; .dockerignore keeps only server/ and web/
 .github/workflows/ci.yml
 ```
 
-The Android client comes later as `android/`, another independent toolchain
-against the JSON API.
+`android/` is the fourth toolchain: a Gradle project, plain Kotlin and Compose,
+against the JSON API. It has no ties to the other three, and `.dockerignore`
+keeps it out of the image.
 
 Why `realm.tsx` sits at the root: every Realm app has that shape, and
 `realm-sdk` commands run from the directory that holds it. Why `web/` has its
@@ -235,6 +291,8 @@ dev:server    build web/, then cargo run with REALMDO_DATA_DIR=./server/data on 
 dev:web       vite on :5173, proxies /api to :3000 and injects X-Realmdo-User: dev
               REALMDO_PORT=3100 moves the server port for both, when :3000 is taken
 build:image   docker buildx build, both arches, benjick/realmdo:latest
+android:build unit tests + lintDebug + assembleDebug in android/
+android:install installDebug onto the connected device (adb)
 ```
 
 `realm-sdk dev` shells out to an `esbuild` binary the SDK does not bring, so the

@@ -1,0 +1,68 @@
+package me.malm.realmdo
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+import java.time.LocalDate
+import java.time.ZoneOffset
+
+private val TODAY: LocalDate = LocalDate.of(2026, 9, 17)
+
+private fun task(
+    kind: String,
+    dueOn: String? = null,
+    afterDays: Long? = null,
+    lastDoneAt: Long? = null,
+    important: Boolean = false,
+    today: List<Pair<String, String>>? = null,
+    pendingSlot: String? = null,
+) = Task(
+    id = 1, title = "t", kind = kind, dueOn = dueOn, afterDays = afterDays, lastDoneAt = lastDoneAt,
+    urgency = 0.5, important = important, today = today, pendingSlot = pendingSlot,
+)
+
+class LabelsTest {
+    @Test
+    fun dueLabelsMirrorTheWebUi() {
+        assertEquals("today", dueLabel("2026-09-17", TODAY))
+        assertEquals("tomorrow", dueLabel("2026-09-18", TODAY))
+        assertEquals("yesterday", dueLabel("2026-09-16", TODAY))
+        assertEquals("in 3 d", dueLabel("2026-09-20", TODAY))
+        assertEquals("2 d ago", dueLabel("2026-09-15", TODAY))
+    }
+
+    @Test
+    fun onceDetailIsTheDueLabelOrNothing() {
+        assertEquals("due in 3 d", detail(task("once", dueOn = "2026-09-20"), TODAY))
+        assertNull(detail(task("once"), TODAY))
+    }
+
+    @Test
+    fun intervalDetailCountsDaysSinceTheLastCompletion() {
+        assertEquals("every 6 d", detail(task("interval", afterDays = 6), TODAY))
+        val threeDaysAgo = LocalDate.of(2026, 9, 14).atStartOfDay(ZoneOffset.UTC).toEpochSecond()
+        assertEquals(
+            "every 6 d · done 3 d ago",
+            detail(task("interval", afterDays = 6, lastDoneAt = threeDaysAgo), TODAY, ZoneOffset.UTC),
+        )
+        val today = TODAY.atStartOfDay(ZoneOffset.UTC).toEpochSecond()
+        assertEquals(
+            "every 6 d · done today",
+            detail(task("interval", afterDays = 6, lastDoneAt = today), TODAY, ZoneOffset.UTC),
+        )
+    }
+
+    @Test
+    fun slotDetailListsEachSlot() {
+        val t = task("slot", today = listOf("before_lunch" to "done", "evening" to "upcoming"))
+        assertEquals("before lunch ✓ · evening upcoming", detail(t, TODAY))
+    }
+
+    @Test
+    fun chipIsTheTitleCutToFit() {
+        assertEquals("Brush teeth", chip(task("slot").copy(title = "Brush teeth")))
+        assertEquals("Clean the…", chip(task("interval").copy(title = "Clean the bathroom")))
+        assertEquals("Supercalifra…", chip(task("once").copy(title = "Supercalifragilistic")))
+        assertEquals("Call mum", chip(task("once").copy(title = "  Call mum ")))
+    }
+}

@@ -1,9 +1,10 @@
 name: CI
 
-# Two independent halves. `container` needs only this repo: the web UI, the
+# Three independent parts. `container` needs only this repo: the web UI, the
 # Rust server, and the image. `realm` needs the Realm SDK, which is private to
 # the holden monorepo and consumed through `link:../holden/packages/sdk`, so it
-# checks holden out as a sibling directory first.
+# checks holden out as a sibling directory first. `android` builds the thin
+# client under android/ against the JSON API and needs nothing else.
 
 on:
   push:
@@ -89,6 +90,20 @@ jobs:
           deno check
           pnpm exec realm-sdk test
           pnpm exec realm-sdk build --out dist/realmdo.realmpack
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build
+        working-directory: android
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon
 
   publish:
     needs: container

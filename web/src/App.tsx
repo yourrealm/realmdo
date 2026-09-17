@@ -81,7 +81,9 @@ export function App() {
   const ranked = tasks.filter((t) => t.kind !== "slot");
   const later = ranked.filter((t) => t.urgency < 0);
   const shown = showLater ? ranked : ranked.filter((t) => t.urgency >= 0);
-  const sel = Math.min(selected, Math.max(shown.length - 1, 0));
+  // One keyboard selection runs down the strip, then the ranked list.
+  const rows = [...daily, ...shown];
+  const sel = Math.min(selected, Math.max(rows.length - 1, 0));
 
   function add(e: FormEvent) {
     e.preventDefault();
@@ -126,10 +128,10 @@ export function App() {
         return;
       }
       if (editing !== null) return;
-      const task = shown[sel];
+      const task = rows[sel];
       switch (e.key) {
         case "j":
-          setSelected(Math.min(sel + 1, shown.length - 1));
+          setSelected(Math.min(sel + 1, rows.length - 1));
           break;
         case "k":
           setSelected(Math.max(sel - 1, 0));
@@ -152,7 +154,7 @@ export function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shown, sel, run, remove, view, editing]);
+  }, [rows, sel, run, remove, view, editing]);
 
   return (
     <main>
@@ -244,16 +246,22 @@ export function App() {
 
           {daily.length > 0 && (
             <ul className="strip">
-              {daily.map((t) => (
-                <li key={t.id} className={t.important ? "important" : ""}>
+              {daily.map((t, i) => (
+                <li
+                  key={t.id}
+                  className={[
+                    t.important ? "important" : "",
+                    i === sel ? "selected" : "",
+                  ].join(" ")}
+                  onClick={() => setSelected(i)}
+                >
                   {editing === t.id
                     ? (
                       <TaskEditor
                         task={t}
                         onSaved={saved}
                         onCancel={() => setEditing(null)}
-                        onDelete={() =>
-                          remove(t.id)}
+                        onDelete={() => remove(t.id)}
                         onError={onError}
                       />
                     )
@@ -271,8 +279,7 @@ export function App() {
                             className={`chip ${state}`}
                             disabled={state === "done"}
                             title={state}
-                            onClick={() =>
-                              run(() => api.done(t.id, slot))}
+                            onClick={() => run(() => api.done(t.id, slot))}
                           >
                             {state === "done" ? "✓ " : ""}
                             {SLOT_LABEL[slot]}
@@ -291,10 +298,10 @@ export function App() {
                 key={t.id}
                 className={[
                   t.important ? "important" : "",
-                  i === sel ? "selected" : "",
+                  daily.length + i === sel ? "selected" : "",
                   t.urgency < 0 ? "later" : "",
                 ].join(" ")}
-                onClick={() => setSelected(i)}
+                onClick={() => setSelected(daily.length + i)}
               >
                 {editing === t.id
                   ? (

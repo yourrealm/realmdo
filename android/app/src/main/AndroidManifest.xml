@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The top-task notification. POST_NOTIFICATIONS is the runtime grant
+         (33+); POST_PROMOTED_NOTIFICATIONS is install-time and unlocks the
+         Android 16 Live Update promotion (status-bar chip, lock screen). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <!-- Short click when "Done" is tapped on the lock screen. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Re-post the notification after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Realmdo">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- The pairing QR from the web UI's Settings, so the phone's own
+                 camera app can pair too: realmdo://pair?url=...&token=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="realmdo" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- Have Play services fetch the scanner module at install time. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
+        <!-- "Done" from the notification and the refresh alarm. Background, no
+             activity, only reachable from this app. -->
+        <receiver
+            android:name=".TaskActionReceiver"
+            android:exported="false" />
+
+        <!-- Boot is a system broadcast, so this one is exported but guarded by
+             the permission only the system holds. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

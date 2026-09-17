@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   api,
   type Settings as SettingsData,
@@ -6,6 +7,12 @@ import {
   SLOTS,
   type Token,
 } from "./api.ts";
+
+/// What the Android app's scanner expects: this origin plus the fresh token.
+function pairUrl(secret: string): string {
+  const url = encodeURIComponent(location.origin);
+  return `realmdo://pair?url=${url}&token=${encodeURIComponent(secret)}`;
+}
 
 function when(ts: number | null): string {
   return ts ? new Date(ts * 1000).toLocaleDateString() : "never";
@@ -197,8 +204,16 @@ export function Settings({ onError }: { onError: (e: unknown) => void }) {
           <div className="minted">
             <p>
               Token for{" "}
-              <b>{minted.name}</b>. Copy it now; it will not be shown again.
+              <b>{minted.name}</b>. Scan it with the Android app, or copy it
+              now; it will not be shown again.
             </p>
+            <QRCodeSVG
+              className="qr"
+              value={pairUrl(minted.secret)}
+              size={192}
+              marginSize={2}
+              title="Pairing code for the Android app"
+            />
             <code>{minted.secret}</code>
             <p>
               <button
