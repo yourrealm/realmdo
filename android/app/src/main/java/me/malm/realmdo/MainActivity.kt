@@ -11,13 +11,22 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -32,7 +41,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -51,7 +59,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -115,6 +125,30 @@ private fun App(vm: TasksViewModel) {
     }
 }
 
+/** The mark next to the app name, for the title bars. */
+@Composable
+private fun AppTitle() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Image(painterResource(R.drawable.mark), contentDescription = null, modifier = Modifier.size(28.dp))
+        Spacer(Modifier.width(10.dp))
+        Text("realmdo")
+    }
+}
+
+/** A full turn per second while [active], else at rest. */
+@Composable
+private fun spin(active: Boolean): Float {
+    if (!active) return 0f
+    val transition = rememberInfiniteTransition(label = "spin")
+    val angle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing)),
+        label = "angle",
+    )
+    return angle
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Unit) {
@@ -129,16 +163,17 @@ private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Un
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("realmdo") },
+                title = { AppTitle() },
                 actions = {
-                    IconButton(onClick = { vm.refresh() }) { Icon(Icons.Default.Refresh, "Refresh") }
+                    IconButton(onClick = { vm.refresh() }) {
+                        Icon(Icons.Default.Refresh, "Refresh", Modifier.rotate(spin(state.loading)))
+                    }
                     IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
                 },
             )
         },
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
@@ -243,7 +278,7 @@ private fun SetupScreen(vm: TasksViewModel, state: UiState) {
             }
             .addOnFailureListener { error = it.message ?: "scan failed" }
     }
-    Scaffold(topBar = { TopAppBar(title = { Text("realmdo") }) }) { pad ->
+    Scaffold(topBar = { TopAppBar(title = { AppTitle() }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Create a token under Settings in the web UI, then scan its code or paste it here.")
             Button(onClick = { scan() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {

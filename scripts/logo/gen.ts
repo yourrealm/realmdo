@@ -15,6 +15,8 @@
 //                                                 the adaptive icon's two layers, per density
 //   android/.../drawable/ic_launcher_monochrome.xml, ic_stat_task.xml
 //                                                 the check outline as vector drawables
+//   android/.../drawable-*/mark.png, drawable-night-*/mark.png
+//                                                 the mark at 28dp for the app's title bar, per density
 //
 // Needs `rsvg-convert` and `magick` on PATH (`brew install librsvg imagemagick`).
 
@@ -217,12 +219,13 @@ function faviconSvg(light: Mark, dark: Mark): string {
 `;
 }
 
-// The light mark alone at the favicon crop: the .ico frames, which cannot
-// follow the color scheme.
-function icoSvg(light: Mark): string {
+// One mark at the favicon crop: the .ico frames, which cannot follow the
+// color scheme, and the Android title-bar PNGs, where the resource qualifier
+// picks the twin.
+function icoSvg(m: Mark): string {
   return `${
     svgOpen(FAVICON_BOX)
-  }\n<defs>${light.defs}</defs>\n<g>${light.tile}${light.check}</g>\n</svg>\n`;
+  }\n<defs>${m.defs}</defs>\n<g>${m.tile}${m.check}</g>\n</svg>\n`;
 }
 
 // ---- the Android adaptive icon ----------------------------------------------
@@ -230,6 +233,7 @@ function icoSvg(light: Mark): string {
 // Mark space onto the 108dp adaptive canvas: the 320-unit tile spans the 72dp
 // the mask shows.
 const TO_ICON = `translate(54 54) scale(${72 / 320}) translate(-200 -200)`;
+const MARK_DP = 28;
 const DENSITIES: Record<string, number> = {
   mdpi: 108,
   hdpi: 162,
@@ -352,6 +356,18 @@ try {
     written.push(
       `android/.../mipmap-${name}/ic_launcher_{background,foreground}.png`,
     );
+    // The title-bar mark, 28dp on the favicon crop; the dark twin under night.
+    const markPx = Math.round(MARK_DP * (px / 108));
+    for (
+      const [qual, m] of [
+        [`drawable-${name}`, light],
+        [`drawable-night-${name}`, dark],
+      ] as const
+    ) {
+      await Deno.mkdir(ANDROID_RES + qual, { recursive: true });
+      await png(icoSvg(m), markPx, `${ANDROID_RES}${qual}/mark.png`);
+    }
+    written.push(`android/.../drawable{,-night}-${name}/mark.png`);
   }
 } finally {
   await Deno.remove(tmp, { recursive: true });
