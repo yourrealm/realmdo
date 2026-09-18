@@ -19,9 +19,8 @@ session-only management). One widget exists (`widgets/tasks.tsx`: ranked list,
 done, add). Tasks are editable (PATCH, inline in the web UI, kind fixed).
 `/public/{secret}/today` serves TRMNL, which polls it. The Android client
 (`android/`) is started: token sign-in, ranked list, add, done, and the top task
-pinned as an Android 16 Live Update. It builds and lints; it has not yet been
-run on a device. The decisions below are the spec. When one changes, change it
-here.
+pinned as an Android 16 Live Update. Verified on a Galaxy S24 (Android 16) on
+2026-09-18. The decisions below are the spec. When one changes, change it here.
 
 ## Where to look in the Realm repo
 
