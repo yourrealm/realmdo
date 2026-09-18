@@ -159,7 +159,16 @@ export function App() {
   return (
     <main>
       <header>
-        <h1>realmdo</h1>
+        <h1>
+          <picture>
+            <source
+              srcSet="/logo-dark.svg"
+              media="(prefers-color-scheme: dark)"
+            />
+            <img className="mark" src="/logo.svg" alt="" />
+          </picture>
+          realmdo
+        </h1>
         <nav>
           <span className="user">{username ?? "…"}</span>
           <button

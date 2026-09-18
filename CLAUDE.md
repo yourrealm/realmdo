@@ -292,7 +292,16 @@ dev:web       vite on :5173, proxies /api to :3000 and injects X-Realmdo-User: d
 build:image   docker buildx build, both arches, benjick/realmdo:latest
 android:build unit tests + lintDebug + assembleDebug in android/
 android:install installDebug onto the connected device (adb)
+logo          regenerate every rendition of the mark from scripts/logo/gen.ts
 ```
+
+The mark is Realm's (`../holden/scripts/logo/gen.ts`) with a checkmark in place
+of the R: same tile, same palette, same clay filter, the check drawn as a filled
+outline so no font is involved. `pnpm logo` writes `web/public/` (`logo.svg`,
+`logo-dark.svg`, `favicon.svg`, `favicon.ico`) and the Android adaptive icon
+(PNG layers per density, the check as the monochrome vector). Edit the script,
+never an output. It needs `rsvg-convert` and `magick`
+(`brew install librsvg imagemagick`).
 
 `realm-sdk dev` shells out to an `esbuild` binary the SDK does not bring, so the
 root `package.json` pins the same `esbuild` holden's root does. It also needs

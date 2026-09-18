@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1E5EFF</color>
-    <color name="accent">#1E5EFF</color>
+    <!-- The mark's lavender, deepened so it reads on a light shade. -->
+    <color name="accent">#7B64E0</color>
 </resources>

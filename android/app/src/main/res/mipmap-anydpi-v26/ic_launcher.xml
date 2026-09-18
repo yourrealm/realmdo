@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The two raster layers are the mark in web/public/logo.svg split for
+     parallax: the tile on the background, sized so it fills the 72dp the mask
+     shows, and the check on the foreground. The clay shading is an SVG filter,
+     which a vector drawable cannot express, so they ship as PNGs per density
+     from scripts/logo/gen.ts. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>
