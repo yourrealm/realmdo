@@ -17,5 +17,12 @@
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true
   },
-  "exclude": ["web", "server", "android", "dist", "realm-bundle.tsx"]
+  "exclude": [
+    "web",
+    "server",
+    "android",
+    "dist",
+    "realm-bundle.tsx",
+    "pnpm-lock.yaml"
+  ]
 }

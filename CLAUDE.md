@@ -253,7 +253,7 @@ body is a 400 in that shape too, not axum's plain-text 422.
 
 One repo, three independent toolchains, nothing shared between them. Not a pnpm
 workspace, no turbo: `web/` never imports the SDK, and the image must build
-without `../holden`.
+without the SDK.
 
 ```
 realm.tsx          deployment: services, getTrustedHeaders, gate, info   } Deno project at the root
@@ -273,8 +273,8 @@ keeps it out of the image.
 
 Why `realm.tsx` sits at the root: every Realm app has that shape, and
 `realm-sdk` commands run from the directory that holds it. Why `web/` has its
-own lockfile: a workspace would put the root `package.json`, with its
-`link:../holden/...`, inside the Docker build, where that path does not exist.
+own lockfile: a workspace would pull the root `package.json`, and with it the
+SDK and everything it drags in, into the Docker build for nothing.
 
 ### Commands
 
@@ -318,14 +318,15 @@ and `USER_HEADER` in `server/src/api.rs`.
 
 ### Consuming the SDK
 
-`@yourrealm/sdk` is `private: true` (not on npm) and lives at
-`../holden/packages/sdk`. Verified 2026-08-28, this works as is:
+`@yourrealm/sdk` comes from npm since 2026-09-19 (before that, a `link:` to
+`../holden/packages/sdk`, which needed holden installed beside this repo):
 
-1. `package.json`: `"@yourrealm/sdk": "link:../holden/packages/sdk"`. pnpm makes
-   `node_modules/@yourrealm/sdk` a symlink, links the `realm-sdk` bin, and the
-   SDK resolves its own dependencies (`@local/*`, preact, zod) from holden's
-   `node_modules`. So holden must be `pnpm install`ed too.
-2. `.npmrc`: `@jsr:registry=https://npm.jsr.io`, for `@std/assert` in tests.
+1. `package.json` pins an exact version. Alpha builds carry a commit hash, so
+   there is no range to trust; bump it by hand when the SDK changes. To work
+   against an unpublished SDK, put `"link:../holden/packages/sdk"` back locally
+   and do not commit it.
+2. `.npmrc`: `@jsr:registry=https://npm.jsr.io`, for `@std/assert` in tests and
+   the SDK's own `@std/*` dependencies.
 3. `deno.json`: `nodeModulesDir: "manual"`, the `compilerOptions` from
    `../holden/deno.json`, and
    `exclude: ["web", "server", "dist",
@@ -336,8 +337,7 @@ and `USER_HEADER` in `server/src/api.rs`.
    instead (see `realm.test.ts`).
 
 CI (`.github/workflows/ci.yml`) mirrors this split: the `container` job needs
-only this repo; the `realm` job checks out `benjick/holden` as a sibling and
-installs it first. If holden is private, set the `HOLDEN_TOKEN` secret.
+only this repo; the `realm` job is a plain `pnpm install` and the four checks.
 
 ## Conventions
 

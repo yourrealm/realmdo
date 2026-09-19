@@ -1,10 +1,9 @@
 name: CI
 
 # Three independent parts. `container` needs only this repo: the web UI, the
-# Rust server, and the image. `realm` needs the Realm SDK, which is private to
-# the holden monorepo and consumed through `link:../holden/packages/sdk`, so it
-# checks holden out as a sibling directory first. `android` builds the thin
-# client under android/ against the JSON API and needs nothing else.
+# Rust server, and the image. `realm` checks realm.tsx with the Realm SDK from
+# npm (@yourrealm/sdk). `android` builds the thin client under android/ against
+# the JSON API and needs nothing else.
 
 on:
   push:
@@ -57,34 +56,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: realmdo
-      - uses: actions/checkout@v7
-        with:
-          repository: benjick/holden
-          path: holden
-          token: ${{ secrets.HOLDEN_TOKEN || github.token }}
 
       - uses: pnpm/action-setup@v6
         with:
-          version: 9.15.0
+          version: 10.13.1
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: pnpm
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
 
-      # The SDK resolves its own dependencies from holden's node_modules
-      # through the symlink, so holden must be installed first.
-      - name: Install Realm SDK
-        working-directory: holden
-        run: pnpm install --frozen-lockfile
-
       - name: Check realm.tsx
-        working-directory: realmdo
         run: |
-          corepack prepare pnpm@10.13.1 --activate
           pnpm install --frozen-lockfile
           deno fmt --check
           deno check
