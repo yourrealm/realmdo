@@ -214,7 +214,25 @@ hidden. Sketch, to be settled against real use:
    15-minute inexact alarm (`setAndAllowWhileIdle`, rescheduled by each fire),
    and after boot. A failed fetch keeps the notification as it was. No push from
    the server; that would need a channel the backend does not have.
-7. Root scripts `android:build` and `android:install` wrap `./gradlew`; CI runs
+7. **Background refresh on Samsung.** One UI's Freecess freezes a cached app and
+   holds its alarms until it next comes to the foreground; the ongoing
+   notification does not exempt it. Measured on the S24 on 2026-09-19: the 22:39
+   alarm was delivered at 08:01, the second the app was opened, with logcat
+   saying "Deferring alarm ... due to freecess". The battery setting
+   "Unrestricted" (the Doze whitelist, `isIgnoringBatteryOptimizations`) is
+   enough on its own: with it set and nothing else changed, the alarm fired
+   every 15 minutes through the night of 2026-09-19. Since no API says "frozen",
+   `BackgroundRefresh` measures it: `scheduleRefresh` records the due time, the
+   receiver and each resume compare it with the clock, and an alarm more than an
+   hour overdue counts as held; an on-time fire after an hour away clears it.
+   The list shows a banner while held; Settings shows a "Background refresh"
+   card under the Live Update switch with the state (restricted, optimised,
+   unrestricted) and buttons for the system exemption dialog
+   (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` in the manifest), Samsung's Battery
+   page (`com.samsung.android.sm.ACTION_BATTERY`, shown only when it resolves
+   without a permission; the Background usage limits page itself demands the
+   system-only `READ_SEARCH_INDEXABLES`) and App info as the fallback.
+8. Root scripts `android:build` and `android:install` wrap `./gradlew`; CI runs
    `testDebugUnitTest lintDebug assembleDebug` in its own job. JVM tests cover
    the pairing parser, the labels and the task JSON; they pull the real
    `org.json` because android.jar only stubs it. `local.properties` points

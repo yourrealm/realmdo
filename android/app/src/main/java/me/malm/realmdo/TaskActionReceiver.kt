@@ -19,7 +19,10 @@ class TaskActionReceiver : BroadcastReceiver() {
             try {
                 when (action) {
                     TaskNotification.ACTION_DONE -> done(app, intent)
-                    TaskNotification.ACTION_REFRESH -> TaskNotification.refresh(app)
+                    TaskNotification.ACTION_REFRESH -> {
+                        BackgroundRefresh.onAlarm(app)
+                        TaskNotification.refresh(app)
+                    }
                 }
             } finally {
                 result.finish()

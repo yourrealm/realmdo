@@ -17,6 +17,8 @@ data class UiState(
     val loading: Boolean = false,
     val error: String? = null,
     val liveUpdate: Boolean = false,
+    /** Whether refreshes reach the app in the background; taken on each resume. */
+    val background: BackgroundRefresh.Status? = null,
 )
 
 /** Holds the list and runs every API call off the main thread. */
@@ -26,6 +28,13 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         UiState(configured = prefs.configured, username = prefs.username, liveUpdate = prefs.liveUpdate),
     )
     val state: StateFlow<UiState> = _state
+
+    /** On resume: judge the background refresh first, since [refresh] reschedules it. */
+    fun resumed() {
+        val status = BackgroundRefresh.onResume(getApplication())
+        _state.update { it.copy(background = status) }
+        refresh()
+    }
 
     fun refresh() {
         val api = Api.from(prefs) ?: return

@@ -120,16 +120,24 @@ object TaskNotification {
         if (v.hasVibrator()) v.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
     }
 
-    /** One inexact, idle-tolerant alarm; each fire schedules the next. */
+    /**
+     * One inexact, idle-tolerant alarm; each fire schedules the next. The due
+     * time is kept so [BackgroundRefresh] can tell a held alarm from a late one.
+     */
     private fun scheduleRefresh(ctx: Context) {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         val pi = refreshIntent(ctx, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
-        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + REFRESH_MS, pi)
+        val due = System.currentTimeMillis() + REFRESH_MS
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, due, pi)
+        Prefs(ctx).refreshDue = due
     }
 
     private fun cancelRefresh(ctx: Context) {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         refreshIntent(ctx, PendingIntent.FLAG_NO_CREATE)?.let { am.cancel(it) }
+        val prefs = Prefs(ctx)
+        prefs.refreshDue = 0
+        prefs.refreshHeld = 0
     }
 
     private fun refreshIntent(ctx: Context, flags: Int): PendingIntent? {

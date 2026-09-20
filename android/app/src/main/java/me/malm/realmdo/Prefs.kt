@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
-/** Server URL, bearer token and the Live Update switch. App-private storage. */
+/** Server URL, bearer token, the Live Update switch and the refresh bookkeeping. App-private storage. */
 class Prefs(context: Context) {
     private val sp: SharedPreferences =
         context.applicationContext.getSharedPreferences("realmdo", Context.MODE_PRIVATE)
@@ -27,6 +27,21 @@ class Prefs(context: Context) {
     var liveUpdate: Boolean
         get() = sp.getBoolean("live_update", false)
         set(v) = sp.edit { putBoolean("live_update", v) }
+
+    /** When the pending refresh alarm should fire; 0 when none is set. */
+    var refreshDue: Long
+        get() = sp.getLong("refresh_due", 0)
+        set(v) = sp.edit { putLong("refresh_due", v) }
+
+    /** How late the last held refresh was, in ms; 0 when the chain runs on time. */
+    var refreshHeld: Long
+        get() = sp.getLong("refresh_held", 0)
+        set(v) = sp.edit { putLong("refresh_held", v) }
+
+    /** When the app last came to the foreground. */
+    var lastResume: Long
+        get() = sp.getLong("last_resume", 0)
+        set(v) = sp.edit { putLong("last_resume", v) }
 
     val configured: Boolean get() = baseUrl.isNotEmpty() && token.isNotEmpty()
 

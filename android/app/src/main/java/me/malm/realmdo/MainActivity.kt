@@ -37,6 +37,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,6 +50,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -100,7 +103,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        vm.refresh()
+        vm.resumed()
     }
 
     /** A `realmdo://pair` link opened from the camera app or any scanner. */
@@ -186,6 +189,7 @@ private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Un
             state.error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
             }
+            state.background?.let { if (state.liveUpdate && it.held) HeldBanner(it, onSettings) }
             val visible = state.tasks.filter { it.urgency >= 0 }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(visible, key = { it.id }) { task ->
@@ -203,6 +207,69 @@ private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Un
                 if (visible.isEmpty() && !state.loading) {
                     item { Text("Nothing to do.", Modifier.padding(16.dp)) }
                 }
+            }
+        }
+    }
+}
+
+/** The pinned task went stale in the background; the fix is under Settings. */
+@Composable
+private fun HeldBanner(status: BackgroundRefresh.Status, onSettings: () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+    ) {
+        Column(Modifier.padding(start = 16.dp, top = 12.dp, end = 8.dp, bottom = 4.dp)) {
+            Text(
+                "The pinned task was not refreshed for ${BackgroundRefresh.label(status.heldMs)} while the app was in the background.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onSettings) { Text("Show how to fix it") }
+            }
+        }
+    }
+}
+
+/**
+ * The guide: what the phone's battery settings do to the refresh alarm and
+ * the buttons that open the right pages. Wording follows what was measured on
+ * a Galaxy S24: "Unrestricted" alone is enough; Sleeping apps is the next
+ * thing to check when it is not.
+ */
+@Composable
+private fun BackgroundCard(status: BackgroundRefresh.Status) {
+    val ctx = LocalContext.current
+    val samsung = remember { BackgroundRefresh.samsungBatteryPage(ctx) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Background refresh", style = MaterialTheme.typography.bodyLarge)
+        val text = when {
+            status.restricted ->
+                "Background use is restricted for this app, so the pinned task only changes while the app is open. " +
+                    "Allow background use under App info, then choose Unrestricted."
+            !status.exempt ->
+                "Battery use is optimised. Samsung and some other phones then freeze the app in the background " +
+                    "and hold its refreshes until it is opened, so the pinned task goes stale overnight. " +
+                    "Allow unrestricted battery use to keep it current."
+            status.held ->
+                "Battery use is unrestricted, but a refresh was still held for ${BackgroundRefresh.label(status.heldMs)}. " +
+                    "On Samsung, open Battery settings, then Background usage limits, and make sure " +
+                    "the app is not under Sleeping apps or Deep sleeping apps."
+            else ->
+                "Battery use is unrestricted, so the pinned task keeps refreshing every 15 minutes in the background."
+        }
+        Text(text, style = MaterialTheme.typography.bodySmall)
+        when {
+            status.restricted -> OutlinedButton(
+                onClick = { BackgroundRefresh.open(ctx, BackgroundRefresh.appInfo(ctx)) }, Modifier.fillMaxWidth(),
+            ) { Text("Open app info") }
+            !status.exempt -> Button(
+                onClick = { BackgroundRefresh.open(ctx, BackgroundRefresh.exemptionDialog(ctx)) }, Modifier.fillMaxWidth(),
+            ) { Text("Allow unrestricted battery use") }
+        }
+        if (samsung != null && (status.held || !status.exempt)) {
+            OutlinedButton(onClick = { BackgroundRefresh.open(ctx, samsung) }, Modifier.fillMaxWidth()) {
+                Text("Battery settings")
             }
         }
     }
@@ -245,6 +312,7 @@ private fun SettingsScreen(vm: TasksViewModel, state: UiState, onBack: () -> Uni
                     },
                 )
             }
+            if (state.liveUpdate) state.background?.let { BackgroundCard(it) }
             OutlinedButton(onClick = { vm.signOut() }, Modifier.fillMaxWidth()) { Text("Sign out") }
         }
     }

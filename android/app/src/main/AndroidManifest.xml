@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- The top-task notification. POST_NOTIFICATIONS is the runtime grant
@@ -11,6 +12,18 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Re-post the notification after a reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The "allow unrestricted battery use?" dialog. Without the exemption
+         Samsung's freezer holds the refresh alarm until the app is opened. -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
+
+    <!-- So the app can see whether Samsung's battery settings page exists. -->
+    <queries>
+        <intent>
+            <action android:name="com.samsung.android.sm.ACTION_BATTERY" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"
