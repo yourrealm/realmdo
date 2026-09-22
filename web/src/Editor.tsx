@@ -25,11 +25,12 @@ export function TaskEditor(
     task.ramp_days === null ? "" : String(task.ramp_days),
   );
   const [slots, setSlots] = useState<Slot[]>(task.slots ?? []);
+  const [notes, setNotes] = useState(task.notes ?? "");
 
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    const patch: TaskPatch = { title };
+    const patch: TaskPatch = { title, notes: notes || null };
     if (task.kind === "once") patch.due_on = dueOn || null;
     if (task.kind === "interval") {
       patch.after_days = Number(after || 0);
@@ -98,6 +99,15 @@ export function TaskEditor(
           ))}
         </div>
       )}
+      <textarea
+        placeholder="Notes"
+        rows={Math.min(Math.max(notes.split("\n").length, 2), 12)}
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
+        }}
+      />
       <div className="actions">
         <button type="submit">Save</button>
         <button type="button" className="link" onClick={onCancel}>

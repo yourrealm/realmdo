@@ -133,9 +133,6 @@ select {
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--line);
 }
-.strip li {
-  flex-wrap: wrap;
-}
 .chip {
   font-size: 0.8em;
   padding: 0.15rem 0.5rem;
@@ -184,7 +181,28 @@ form.settings label {
   gap: 0.5rem;
   color: var(--muted);
 }
+form.editor textarea {
+  flex: 1 1 100%;
+}
+.notes-toggle {
+  padding: 0 0.3rem;
+}
+.notes-toggle.open {
+  color: var(--fg);
+}
+.notes {
+  flex: 1 1 100%;
+  margin: 0.1rem 0 0.3rem 1.6rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.notes a {
+  color: inherit;
+}
 input,
+textarea,
 button {
   font: inherit;
   color: inherit;
@@ -200,6 +218,7 @@ ul {
 }
 li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem;
   padding: 0.4rem 0.5rem;

@@ -33,6 +33,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const USER_HEADER: &str = "x-realmdo-user";
 const MAX_USERNAME: usize = 64;
 const MAX_TITLE: usize = 500;
+const MAX_NOTES: usize = 4000;
 const MAX_TOKEN_NAME: usize = 64;
 const MAX_DAYS: i64 = 3650;
 
@@ -437,10 +438,27 @@ struct NewTask {
     after_days: Option<i64>,
     ramp_days: Option<i64>,
     slots: Option<Vec<Slot>>,
+    notes: Option<String>,
 }
 
 fn default_kind() -> db::Kind {
     db::Kind::Once
+}
+
+/// Trims notes; blank means none.
+fn clean_notes(notes: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(n) = notes
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+    else {
+        return Ok(None);
+    };
+    if n.chars().count() > MAX_NOTES {
+        return Err(ApiError::BadRequest(format!(
+            "notes must be at most {MAX_NOTES} characters"
+        )));
+    }
+    Ok(Some(n))
 }
 
 /// Checks the fields that belong to each kind. Returns the cleaned due date
@@ -508,6 +526,7 @@ async fn create_task(
         )));
     }
     let (due_on, slots) = validate_new_task(&body)?;
+    let notes = clean_notes(body.notes)?;
     let ctx = Ctx::new(&state, id.user);
     let user_id = ctx.user.id;
     let now = ctx.now;
@@ -521,6 +540,7 @@ async fn create_task(
                 after_days: body.after_days,
                 ramp_days: body.ramp_days,
                 slots,
+                notes: notes.as_deref(),
             };
             db::insert_task(c, user_id, &new, now, &day)
         })
@@ -529,7 +549,8 @@ async fn create_task(
 }
 
 /// A partial edit. Absent fields keep their value; `due_on: null` clears the
-/// date and `ramp_days: null` returns to the default ramp.
+/// date, `ramp_days: null` returns to the default ramp and `notes: null` (or
+/// blank) clears the notes.
 #[derive(Deserialize)]
 struct TaskPatch {
     title: Option<String>,
@@ -540,6 +561,8 @@ struct TaskPatch {
     #[serde(default, deserialize_with = "double_option")]
     ramp_days: Option<Option<i64>>,
     slots: Option<Vec<Slot>>,
+    #[serde(default, deserialize_with = "double_option")]
+    notes: Option<Option<String>>,
 }
 
 /// Keeps "absent" (outer None, via default) apart from "null" (Some(None)):
@@ -588,6 +611,10 @@ async fn patch_task(
     let mut after_days = current.after_days;
     let mut ramp_days = current.ramp_days;
     let mut slots = current.slots.clone();
+    let notes = match patch.notes {
+        Some(n) => clean_notes(n)?,
+        None => current.notes.clone(),
+    };
     match current.kind {
         db::Kind::Once => {
             if patch.after_days.is_some() || patch.ramp_days.is_some() {
@@ -649,6 +676,7 @@ async fn patch_task(
                 after_days,
                 ramp_days,
                 slots,
+                notes: notes.as_deref(),
             };
             db::update_task(c, user_id, task_id, &upd, &day)
         })
@@ -783,7 +811,7 @@ struct PublicToday {
 }
 
 /// Today's visible list for callers that cannot set headers (TRMNL pull).
-/// The opaque secret in the path is the whole credential.
+/// The opaque secret in the path is the whole credential, so notes stay out.
 async fn public_today(
     State(state): State<AppState>,
     Path(secret): Path<String>,
@@ -799,7 +827,7 @@ async fn public_today(
     let tasks = state.db(move |c| db::open_tasks(c, user_id, &day)).await?;
     let mut views: Vec<TaskView> = tasks
         .into_iter()
-        .map(|t| view(t, &ctx))
+        .map(|t| view(db::Task { notes: None, ..t }, &ctx))
         .filter(|v| v.urgency >= 0.0)
         .collect();
     sort_views(&mut views);
@@ -1232,12 +1260,36 @@ mod tests {
         assert_eq!(body["title"], "book dentist");
         assert_eq!(body["due_on"], Value::Null);
         assert_eq!(body["urgency"], 0.5, "undated again");
+        assert_eq!(body["notes"], Value::Null);
+
+        let (status, body) = call(
+            &app,
+            patch(
+                once_id,
+                json!({ "notes": "  ask about the crown\n\ncall before 10  " }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["notes"], "ask about the crown\n\ncall before 10",
+            "trimmed"
+        );
+        assert_eq!(body["title"], "book dentist", "absent fields kept");
+        let (_, body) = call(&app, patch(once_id, json!({ "title": "dentist" }))).await;
+        assert_eq!(body["notes"], "ask about the crown\n\ncall before 10");
+        let (_, body) = call(&app, patch(once_id, json!({ "notes": " " }))).await;
+        assert_eq!(body["notes"], Value::Null, "blank clears");
+        call(&app, patch(once_id, json!({ "notes": "x" }))).await;
+        let (_, body) = call(&app, patch(once_id, json!({ "notes": null }))).await;
+        assert_eq!(body["notes"], Value::Null, "null clears");
 
         for bad in [
             json!({ "kind": "interval" }),
             json!({ "after_days": 3 }),
             json!({ "slots": ["morning"] }),
             json!({ "title": "" }),
+            json!({ "notes": "n".repeat(MAX_NOTES + 1) }),
         ] {
             let (status, _) = call(&app, patch(once_id, bad.clone())).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
@@ -1289,7 +1341,8 @@ mod tests {
     #[tokio::test]
     async fn the_public_url_reads_one_users_visible_list_only() {
         let app = app();
-        create(&app, json!({ "title": "visible" })).await;
+        let (_, body) = create(&app, json!({ "title": "visible", "notes": "private" })).await;
+        assert_eq!(body["notes"], "private");
         create(&app, json!({ "title": "hidden", "due_on": "2026-12-24" })).await;
         call(
             &app,
@@ -1353,6 +1406,7 @@ mod tests {
             vec!["visible"],
             "hidden and other users' tasks stay out"
         );
+        assert_eq!(body["tasks"][0]["notes"], Value::Null, "notes stay out");
 
         // Regenerating rotates; disabling closes the door.
         let (_, body) = call(&app, request(Method::POST, "/api/public-url", &[MAX], None)).await;

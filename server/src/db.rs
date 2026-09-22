@@ -79,6 +79,8 @@ pub struct Task {
     pub ramp_days: Option<i64>,
     /// Slot: which slots of the day, in day order.
     pub slots: Option<Vec<Slot>>,
+    /// Free text; `None` when empty. Kept across completions.
+    pub notes: Option<String>,
     pub created_at: i64,
     /// One-off: set when completed (archived).
     pub done_at: Option<i64>,
@@ -143,6 +145,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE users ADD COLUMN public_secret_hash TEXT;
     CREATE UNIQUE INDEX users_public_secret ON users(public_secret_hash)
         WHERE public_secret_hash IS NOT NULL;",
+    // v6: free-text notes on a task.
+    "ALTER TABLE tasks ADD COLUMN notes TEXT;",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -369,7 +373,7 @@ pub fn delete_token(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Resul
 /// day bound as `:day`. `task_row` reads exactly this.
 const TASK_SELECT: &str =
     "SELECT t.id, t.title, t.kind, t.due_on, t.after_days, t.ramp_days, t.slots,
-        t.created_at, t.done_at,
+        t.created_at, t.done_at, t.notes,
         (SELECT MAX(c.completed_at) FROM completions c WHERE c.task_id = t.id),
         (SELECT GROUP_CONCAT(c.slot) FROM completions c
             WHERE c.task_id = t.id AND c.day = :day AND c.slot IS NOT NULL)
@@ -381,7 +385,7 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         .map(|s| serde_json::from_str::<Vec<Slot>>(&s))
         .transpose()
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, Type::Text, Box::new(e)))?;
-    let checked: Option<String> = r.get(10)?;
+    let checked: Option<String> = r.get(11)?;
     // GROUP_CONCAT has no order; put the slots back in day order.
     let mut checked_today: Vec<Slot> = checked
         .map(|s| s.split(',').filter_map(Slot::parse).collect())
@@ -395,9 +399,10 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         after_days: r.get(4)?,
         ramp_days: r.get(5)?,
         slots,
+        notes: r.get(9)?,
         created_at: r.get(7)?,
         done_at: r.get(8)?,
-        last_done_at: r.get(9)?,
+        last_done_at: r.get(10)?,
         checked_today,
     })
 }
@@ -435,6 +440,7 @@ pub struct NewTask<'a> {
     pub after_days: Option<i64>,
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
+    pub notes: Option<&'a str>,
 }
 
 pub fn insert_task(
@@ -449,8 +455,9 @@ pub fn insert_task(
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
     let id: i64 = conn.query_row(
-        "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id",
+        "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, notes,
+            created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) RETURNING id",
         params![
             user_id,
             new.title,
@@ -459,6 +466,7 @@ pub fn insert_task(
             new.after_days,
             new.ramp_days,
             slots,
+            new.notes,
             now
         ],
         |r| r.get(0),
@@ -473,6 +481,7 @@ pub struct TaskUpdate<'a> {
     pub after_days: Option<i64>,
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
+    pub notes: Option<&'a str>,
 }
 
 /// Rewrites a task's mutable columns. `None` when it is not this user's.
@@ -488,7 +497,8 @@ pub fn update_task(
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
     let n = conn.execute(
-        "UPDATE tasks SET title = ?3, due_on = ?4, after_days = ?5, ramp_days = ?6, slots = ?7
+        "UPDATE tasks SET title = ?3, due_on = ?4, after_days = ?5, ramp_days = ?6, slots = ?7,
+            notes = ?8
          WHERE id = ?1 AND user_id = ?2",
         params![
             id,
@@ -497,7 +507,8 @@ pub fn update_task(
             upd.due_on,
             upd.after_days,
             upd.ramp_days,
-            slots
+            slots,
+            upd.notes
         ],
     )?;
     if n == 0 {
@@ -571,6 +582,7 @@ mod tests {
             after_days: None,
             ramp_days: None,
             slots: None,
+            notes: None,
         }
     }
 
@@ -582,6 +594,7 @@ mod tests {
             after_days: Some(after),
             ramp_days: ramp,
             slots: None,
+            notes: None,
         }
     }
 
@@ -593,6 +606,7 @@ mod tests {
             after_days: None,
             ramp_days: None,
             slots: Some(slots.to_vec()),
+            notes: None,
         }
     }
 
@@ -752,6 +766,7 @@ mod tests {
             after_days: None,
             ramp_days: None,
             slots: None,
+            notes: Some("the blue one"),
         };
         assert!(
             update_task(&conn, eve.id, t.id, &upd, DAY)
@@ -762,6 +777,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((t.title.as_str(), t.due_on), ("scrub", None));
+        assert_eq!(t.notes.as_deref(), Some("the blue one"));
+        let done = complete_task(&conn, max.id, t.id, 20, DAY, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            done.notes.as_deref(),
+            Some("the blue one"),
+            "archived with it"
+        );
     }
 
     #[test]

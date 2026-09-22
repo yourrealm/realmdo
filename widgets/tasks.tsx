@@ -36,6 +36,7 @@ const task = z.object({
   pending_slot: z.enum(["morning", "before_lunch", "afternoon", "evening"])
     .nullable(),
   due_on: z.string().nullable(),
+  notes: z.string().nullable(),
   urgency: z.number(),
   important: z.boolean(),
 });
@@ -140,6 +141,15 @@ export default (({ loaders, actions, config }) => {
                 </span>
               )}
             </span>
+            {t.notes && (
+              <span
+                title={t.notes}
+                aria-label="Has notes"
+                class="ml-auto shrink-0 text-xs text-muted-foreground"
+              >
+                ≡
+              </span>
+            )}
           </li>
         ))}
         {shown.length === 0 && (

@@ -17,6 +17,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,15 +25,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -45,6 +50,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -54,10 +60,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,6 +74,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -76,6 +92,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var vm: TasksViewModel
@@ -156,6 +173,7 @@ private fun spin(active: Boolean): Float {
 @Composable
 private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Unit) {
     var title by rememberSaveable { mutableStateOf("") }
+    var sheetId by rememberSaveable { mutableStateOf<Long?>(null) }
     val submit = {
         val t = title.trim()
         if (t.isNotEmpty()) {
@@ -194,12 +212,16 @@ private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Un
             LazyColumn(Modifier.fillMaxSize()) {
                 items(visible, key = { it.id }) { task ->
                     ListItem(
+                        modifier = if (task.notes == null) Modifier else Modifier.clickable { sheetId = task.id },
                         headlineContent = {
                             Text(task.title, fontWeight = if (task.important) FontWeight.Bold else null)
                         },
                         supportingContent = { detail(task)?.let { Text(it) } },
                         trailingContent = {
-                            IconButton(onClick = { vm.done(task) }) { Icon(Icons.Default.Check, "Done") }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (task.notes != null) Icon(Icons.AutoMirrored.Filled.List, "Has notes")
+                                IconButton(onClick = { vm.done(task) }) { Icon(Icons.Default.Check, "Done") }
+                            }
                         },
                     )
                     HorizontalDivider()
@@ -207,6 +229,63 @@ private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Un
                 if (visible.isEmpty() && !state.loading) {
                     item { Text("Nothing to do.", Modifier.padding(16.dp)) }
                 }
+            }
+        }
+    }
+    // Looked up by id so the sheet follows refreshes; it closes if the task goes.
+    val sheetTask = sheetId?.let { id -> state.tasks.find { it.id == id && it.notes != null } }
+    if (sheetTask != null) {
+        NotesSheet(sheetTask, onDone = { vm.done(sheetTask) }, onDismiss = { sheetId = null })
+    } else if (sheetId != null) {
+        LaunchedEffect(Unit) { sheetId = null }
+    }
+}
+
+private val URL = Regex("""https?://\S+""")
+
+/** Notes as text, with bare http(s) URLs made tappable. */
+@Composable
+private fun notesText(notes: String): AnnotatedString {
+    val style = TextLinkStyles(SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline))
+    return buildAnnotatedString {
+        var at = 0
+        for (m in URL.findAll(notes)) {
+            append(notes.substring(at, m.range.first))
+            withLink(LinkAnnotation.Url(m.value, style)) { append(m.value) }
+            at = m.range.last + 1
+        }
+        append(notes.substring(at))
+    }
+}
+
+/** A task's notes over the list, with Done at hand. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotesSheet(task: Task, onDone: () -> Unit, onDismiss: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+        ) {
+            Text(task.title, style = MaterialTheme.typography.titleLarge)
+            detail(task)?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(notesText(task.notes.orEmpty()), style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(24.dp))
+            Button(
+                onClick = {
+                    onDone()
+                    scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+                },
+                Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Check, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Done")
             }
         }
     }

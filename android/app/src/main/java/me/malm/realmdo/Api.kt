@@ -20,6 +20,8 @@ data class Task(
     val today: List<Pair<String, String>>?,
     /** Slot tasks: the slot a bare "done" would check. */
     val pendingSlot: String?,
+    /** Free text, edited in the web UI. */
+    val notes: String?,
 ) {
     companion object {
         fun from(o: JSONObject): Task = Task(
@@ -38,6 +40,7 @@ data class Task(
                 }
             },
             pendingSlot = o.optString("pending_slot").takeIf { !o.isNull("pending_slot") },
+            notes = o.optString("notes").takeIf { !o.isNull("notes") && it.isNotEmpty() },
         )
     }
 }

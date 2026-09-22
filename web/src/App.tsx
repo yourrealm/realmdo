@@ -42,6 +42,39 @@ function detail(t: Task): string | null {
   return t.due_on ? dueLabel(t.due_on) : null;
 }
 
+/// Notes as text, with bare http(s) URLs made clickable.
+function Notes({ text }: { text: string }) {
+  return (
+    <p className="notes">
+      {text.split(/(https?:\/\/\S+)/).map((part, i) =>
+        i % 2
+          ? (
+            <a key={i} href={part} target="_blank" rel="noreferrer">
+              {part}
+            </a>
+          )
+          : part
+      )}
+    </p>
+  );
+}
+
+function NotesToggle(
+  { open, onClick }: { open: boolean; onClick: () => void },
+) {
+  return (
+    <button
+      className={`link notes-toggle${open ? " open" : ""}`}
+      aria-label={open ? "Hide notes" : "Show notes"}
+      aria-expanded={open}
+      title="Notes"
+      onClick={onClick}
+    >
+      ≡
+    </button>
+  );
+}
+
 export function App() {
   const [username, setUsername] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -55,6 +88,7 @@ export function App() {
   const [showLater, setShowLater] = useState(false);
   const [selected, setSelected] = useState(0);
   const [editing, setEditing] = useState<number | null>(null);
+  const [open, setOpen] = useState<number | null>(null);
   const [view, setView] = useState<"tasks" | "settings">("tasks");
   const input = useRef<HTMLInputElement>(null);
 
@@ -145,6 +179,9 @@ export function App() {
         case "e":
           if (task) setEditing(task.id);
           break;
+        case "o":
+          if (task?.notes) setOpen(open === task.id ? null : task.id);
+          break;
         case "n":
         case "/":
           e.preventDefault();
@@ -154,7 +191,7 @@ export function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rows, sel, run, remove, view, editing]);
+  }, [rows, sel, run, remove, view, editing, open]);
 
   return (
     <main>
@@ -282,6 +319,12 @@ export function App() {
                         >
                           {t.title}
                         </span>
+                        {t.notes && (
+                          <NotesToggle
+                            open={open === t.id}
+                            onClick={() => setOpen(open === t.id ? null : t.id)}
+                          />
+                        )}
                         {(t.today ?? []).map(({ slot, state }) => (
                           <button
                             key={slot}
@@ -294,6 +337,7 @@ export function App() {
                             {SLOT_LABEL[slot]}
                           </button>
                         ))}
+                        {t.notes && open === t.id && <Notes text={t.notes} />}
                       </>
                     )}
                 </li>
@@ -338,6 +382,13 @@ export function App() {
                         {t.title}
                       </span>
                       {detail(t) && <span className="due">{detail(t)}</span>}
+                      {t.notes && (
+                        <NotesToggle
+                          open={open === t.id}
+                          onClick={() => setOpen(open === t.id ? null : t.id)}
+                        />
+                      )}
+                      {t.notes && open === t.id && <Notes text={t.notes} />}
                     </>
                   )}
               </li>
@@ -356,7 +407,9 @@ export function App() {
         </>
       )}
 
-      <footer>j/k move · x done · e edit · d delete · n new · esc back</footer>
+      <footer>
+        j/k move · x done · e edit · o notes · d delete · n new · esc back
+      </footer>
     </main>
   );
 }

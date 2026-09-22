@@ -28,6 +28,7 @@ export interface Task {
   after_days: number | null;
   ramp_days: number | null;
   slots: Slot[] | null;
+  notes: string | null;
   created_at: number;
   done_at: number | null;
   last_done_at: number | null;
@@ -46,13 +47,14 @@ export interface NewTask {
   slots?: Slot[];
 }
 
-/** Absent fields keep their value; due_on/ramp_days null clears them. */
+/** Absent fields keep their value; due_on/ramp_days/notes null clears them. */
 export interface TaskPatch {
   title?: string;
   due_on?: string | null;
   after_days?: number;
   ramp_days?: number | null;
   slots?: Slot[];
+  notes?: string | null;
 }
 
 export interface Settings {

@@ -24,6 +24,19 @@ class TaskJsonTest {
         assertNull(t.lastDoneAt)
         assertNull(t.today)
         assertNull(t.pendingSlot)
+        assertNull(t.notes)
+    }
+
+    @Test
+    fun notesKeepTheirLineBreaks() {
+        val t = Task.from(
+            JSONObject(
+                """{"id":8,"title":"Buy protein powder","kind":"once","due_on":null,"after_days":null,"ramp_days":null,
+                   "slots":null,"notes":"Whey, vanilla\nunder 400 kr","created_at":1,"done_at":null,"last_done_at":null,
+                   "urgency":0.5,"important":false,"today":null,"pending_slot":null}""",
+            ),
+        )
+        assertEquals("Whey, vanilla\nunder 400 kr", t.notes)
     }
 
     @Test

@@ -16,11 +16,12 @@ three task kinds are built, per user, with urgency computed on read in the
 user's time zone and a completion history. Per-user settings hold the time zone
 and slot start times. Bearer tokens are done (minted under Settings, hashed,
 session-only management). One widget exists (`widgets/tasks.tsx`: ranked list,
-done, add). Tasks are editable (PATCH, inline in the web UI, kind fixed).
-`/public/{secret}/today` serves TRMNL, which polls it. The Android client
-(`android/`) is started: token sign-in, ranked list, add, done, and the top task
-pinned as an Android 16 Live Update. Verified on a Galaxy S24 (Android 16) on
-2026-09-18. The decisions below are the spec. When one changes, change it here.
+done, add). Tasks are editable (PATCH, inline in the web UI, kind fixed) and
+carry optional free-text notes. `/public/{secret}/today` serves TRMNL, which
+polls it. The Android client (`android/`) is started: token sign-in, ranked
+list, add, done, and the top task pinned as an Android 16 Live Update. Verified
+on a Galaxy S24 (Android 16) on 2026-09-18. The decisions below are the spec.
+When one changes, change it here.
 
 ## Where to look in the Realm repo
 
@@ -95,6 +96,16 @@ hidden. Sketch, to be settled against real use:
   checked ahead. One completion row per (local day, slot).
 
 "Important" is the visual state at urgency >= 1.
+
+**Notes.** Any task may carry free text (plain, multi-line, up to 4000
+characters, bare URLs made clickable). Notes belong to the task, not to a
+completion: they stay across interval and slot completions and are archived with
+a one-off. They are written in the web editor only (not the add form) and read
+in three places: the web row (a `≡` toggle, `o` on the keyboard), the widget (a
+`≡` marker with the text as its tooltip) and the Android list (tap a row to open
+a bottom sheet, read-only). They stay out of the Live Update and out of
+`/public/`, whose URL secret is a weaker credential than a session or token.
+Decided 2026-09-23.
 
 ### Stack
 
@@ -192,9 +203,10 @@ hidden. Sketch, to be settled against real use:
    `realmdo://pair` intent filter so the phone's own camera app can open it.
    Pasting the token by hand still works.
 4. **Screens:** setup (URL + token), the ranked list (add one-off by title, done
-   per row, refresh on resume) and settings (the Live Update switch, sign out).
-   Tasks below urgency 0 are hidden, like the web UI. Editing and the other
-   kinds are web-only for now.
+   per row, tap a row with notes to open them in a bottom sheet
+   (`ModalBottomSheet`) with Done, refresh on resume) and settings (the Live
+   Update switch, sign out). Tasks below urgency 0 are hidden, like the web UI.
+   Editing and the other kinds are web-only for now.
 5. **The Live Update.** One notification for the top-ranked task, static (no
    countdown, no bar). Title is the task; the status-bar chip
    (`shortCriticalText`) is the title cut to about twelve characters; the second
@@ -245,19 +257,20 @@ GET    /api/me                   { username, via: "session" | "token" }
 GET    /api/settings             { timezone, slot_times: { morning, before_lunch, afternoon, evening } } (HH:MM)
 PUT    /api/settings             same body; validated (IANA zone, HH:MM, increasing)
 GET    /api/tasks                open tasks, sorted by urgency desc, with urgency + important
-POST   /api/tasks                { title, kind?: "once" | "interval" | "slot", due_on?, after_days?, ramp_days?, slots? } -> 201
+POST   /api/tasks                { title, kind?: "once" | "interval" | "slot", due_on?, after_days?, ramp_days?, slots?, notes? } -> 201
                                  once: optional due_on; interval: after_days required, ramp_days optional;
                                  slot: slots required (subset of morning, before_lunch, afternoon, evening)
                                  every task view carries urgency, important, today (slot statuses) and pending_slot
 PATCH  /api/tasks/{id}           partial edit within the kind (kind cannot change);
-                                 due_on: null clears, ramp_days: null returns to default
+                                 due_on: null clears, ramp_days: null returns to default,
+                                 notes: null or blank clears (trimmed, at most 4000 chars)
 POST   /api/tasks/{id}/done      once: archives (idempotent); interval: records a completion, stays open;
                                  slot: optional { slot }, default the most pressing unchecked, no-op when all done
 DELETE /api/tasks/{id}           -> 204
 GET    /api/public-url           session only; { enabled }
 POST   /api/public-url           session only; -> 201 { path } exactly once; rotates
 DELETE /api/public-url           session only; disables
-GET    /public/{secret}/today    no auth; { date, username, tasks } (visible tasks only)
+GET    /public/{secret}/today    no auth; { date, username, tasks } (visible tasks only, notes always null)
 GET    /api/tokens               session only
 POST   /api/tokens               { name } -> 201, carries `secret` exactly once
 DELETE /api/tokens/{id}          session only, -> 204

@@ -18,7 +18,7 @@ private fun task(
     pendingSlot: String? = null,
 ) = Task(
     id = 1, title = "t", kind = kind, dueOn = dueOn, afterDays = afterDays, lastDoneAt = lastDoneAt,
-    urgency = 0.5, important = important, today = today, pendingSlot = pendingSlot,
+    urgency = 0.5, important = important, today = today, pendingSlot = pendingSlot, notes = null,
 )
 
 class LabelsTest {
