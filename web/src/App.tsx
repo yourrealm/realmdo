@@ -15,6 +15,7 @@ import {
 } from "./api.ts";
 import { Settings } from "./Settings.tsx";
 import { TaskEditor } from "./Editor.tsx";
+import { Done } from "./Done.tsx";
 
 const DAY_MS = 86_400_000;
 
@@ -89,7 +90,7 @@ export function App() {
   const [selected, setSelected] = useState(0);
   const [editing, setEditing] = useState<number | null>(null);
   const [open, setOpen] = useState<number | null>(null);
-  const [view, setView] = useState<"tasks" | "settings">("tasks");
+  const [view, setView] = useState<"tasks" | "done" | "settings">("tasks");
   const input = useRef<HTMLInputElement>(null);
 
   const onError = useCallback((e: unknown) => {
@@ -141,6 +142,8 @@ export function App() {
     });
   }
 
+  const refresh = useCallback(() => void run(async () => {}), [run]);
+
   const saved = useCallback(() => {
     setEditing(null);
     void run(async () => {});
@@ -157,7 +160,7 @@ export function App() {
         if (e.key === "Escape") e.target.blur();
         return;
       }
-      if (view === "settings") {
+      if (view !== "tasks") {
         if (e.key === "Escape") setView("tasks");
         return;
       }
@@ -208,18 +211,29 @@ export function App() {
         </h1>
         <nav>
           <span className="user">{username ?? "…"}</span>
-          <button
-            className="link"
-            onClick={() => setView(view === "tasks" ? "settings" : "tasks")}
-          >
-            {view === "tasks" ? "settings" : "tasks"}
-          </button>
+          {view === "tasks"
+            ? (
+              <>
+                <button className="link" onClick={() => setView("done")}>
+                  done
+                </button>
+                <button className="link" onClick={() => setView("settings")}>
+                  settings
+                </button>
+              </>
+            )
+            : (
+              <button className="link" onClick={() => setView("tasks")}>
+                tasks
+              </button>
+            )}
         </nav>
       </header>
 
       {error && <p className="error">{error}</p>}
 
       {view === "settings" && <Settings onError={onError} />}
+      {view === "done" && <Done onChanged={refresh} onError={onError} />}
       {view === "tasks" && (
         <>
           <form onSubmit={add}>

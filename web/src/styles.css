@@ -263,3 +263,6 @@ footer {
   margin-top: 2rem;
   font-size: 0.8em;
 }
+.title .due {
+  margin-left: 0.4rem;
+}

@@ -91,6 +91,20 @@ pub struct Task {
     pub checked_today: Vec<Slot>,
 }
 
+/// One completion row with its task, for the history page.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Completion {
+    pub id: i64,
+    pub task_id: i64,
+    pub title: String,
+    pub kind: Kind,
+    /// Slot tasks: the slot checked.
+    pub slot: Option<Slot>,
+    /// The user's local day it was for; absent on rows from before v4.
+    pub day: Option<String>,
+    pub completed_at: i64,
+}
+
 const MIGRATIONS: &[&str] = &[
     // v1: users and one-off tasks.
     "CREATE TABLE users (
@@ -564,6 +578,73 @@ pub fn delete_task(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result
     Ok(n > 0)
 }
 
+/// The latest completion of every recurring task, plus the latest
+/// `once_limit` archived one-offs. Newest first.
+pub fn recent_completions(
+    conn: &Connection,
+    user_id: i64,
+    once_limit: i64,
+) -> rusqlite::Result<Vec<Completion>> {
+    let mut stmt = conn.prepare(
+        "WITH latest AS (
+            SELECT c.id, c.task_id, t.title, t.kind, c.slot, c.day, c.completed_at, t.done_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY c.task_id ORDER BY c.completed_at DESC, c.id DESC
+                ) AS rn
+            FROM completions c JOIN tasks t ON t.id = c.task_id
+            WHERE t.user_id = ?1
+         )
+         SELECT id, task_id, title, kind, slot, day, completed_at FROM latest
+            WHERE rn = 1 AND kind != 'once'
+         UNION ALL
+         SELECT * FROM (
+            SELECT id, task_id, title, kind, slot, day, completed_at FROM latest
+            WHERE rn = 1 AND kind = 'once' AND done_at IS NOT NULL
+            ORDER BY completed_at DESC, id DESC LIMIT ?2
+         )
+         ORDER BY completed_at DESC, id DESC",
+    )?;
+    let rows = stmt.query_map(params![user_id, once_limit], |r| {
+        let slot: Option<String> = r.get(4)?;
+        Ok(Completion {
+            id: r.get(0)?,
+            task_id: r.get(1)?,
+            title: r.get(2)?,
+            kind: r.get(3)?,
+            slot: slot.as_deref().and_then(Slot::parse),
+            day: r.get(5)?,
+            completed_at: r.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Takes a completion back: the row goes, and a one-off returns to the open
+/// list. `true` when it was this user's.
+pub fn restore_completion(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result<bool> {
+    let tx = conn.unchecked_transaction()?;
+    let found: Option<(i64, Kind)> = tx
+        .query_row(
+            "SELECT t.id, t.kind FROM completions c JOIN tasks t ON t.id = c.task_id
+             WHERE c.id = ?1 AND t.user_id = ?2",
+            params![id, user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((task_id, kind)) = found else {
+        return Ok(false);
+    };
+    tx.execute("DELETE FROM completions WHERE id = ?1", params![id])?;
+    if kind == Kind::Once {
+        tx.execute(
+            "UPDATE tasks SET done_at = NULL WHERE id = ?1",
+            params![task_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -786,6 +867,52 @@ mod tests {
             Some("the blue one"),
             "archived with it"
         );
+    }
+
+    #[test]
+    fn history_shows_latest_recurring_and_recent_one_offs_and_restores() {
+        let conn = memory();
+        let max = upsert_user(&conn, "max", 1).unwrap();
+        let eve = upsert_user(&conn, "eve", 1).unwrap();
+        let iv = insert_task(&conn, max.id, &every("bathroom", 6, None), 1, DAY).unwrap();
+        let teeth = insert_task(&conn, max.id, &daily("teeth", &[Slot::Morning]), 1, DAY).unwrap();
+        complete_task(&conn, max.id, iv.id, 100, DAY, None).unwrap();
+        complete_task(&conn, max.id, iv.id, 200, DAY, None).unwrap();
+        complete_task(&conn, max.id, teeth.id, 150, DAY, Some(Slot::Morning)).unwrap();
+        let mut once_ids = vec![];
+        for i in 0..3 {
+            let t = insert_task(&conn, max.id, &once("buy", None), 1, DAY).unwrap();
+            complete_task(&conn, max.id, t.id, 300 + i, DAY, None).unwrap();
+            once_ids.push(t.id);
+        }
+        insert_task(&conn, max.id, &once("open", None), 1, DAY).unwrap();
+
+        let h = recent_completions(&conn, max.id, 2).unwrap();
+        let seen: Vec<(i64, i64)> = h.iter().map(|c| (c.task_id, c.completed_at)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                (once_ids[2], 302),
+                (once_ids[1], 301),
+                (iv.id, 200),
+                (teeth.id, 150)
+            ],
+            "one row per recurring task, the newest one-offs only, newest first"
+        );
+        assert_eq!(h[3].slot, Some(Slot::Morning));
+        assert!(recent_completions(&conn, eve.id, 30).unwrap().is_empty());
+
+        // Restoring an interval check steps back to the one before.
+        assert!(!restore_completion(&conn, eve.id, h[2].id).unwrap());
+        assert!(restore_completion(&conn, max.id, h[2].id).unwrap());
+        let t = get_task(&conn, max.id, iv.id, DAY).unwrap().unwrap();
+        assert_eq!(t.last_done_at, Some(100));
+        // Restoring a one-off reopens it.
+        assert!(restore_completion(&conn, max.id, h[0].id).unwrap());
+        let t = get_task(&conn, max.id, once_ids[2], DAY).unwrap().unwrap();
+        assert_eq!((t.done_at, t.last_done_at), (None, None));
+        assert_eq!(open_tasks(&conn, max.id, DAY).unwrap().len(), 4);
+        assert!(!restore_completion(&conn, max.id, h[0].id).unwrap(), "gone");
     }
 
     #[test]

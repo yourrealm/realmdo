@@ -36,6 +36,8 @@ const MAX_TITLE: usize = 500;
 const MAX_NOTES: usize = 4000;
 const MAX_TOKEN_NAME: usize = 64;
 const MAX_DAYS: i64 = 3650;
+/// Archived one-offs on the history page.
+const RECENT_ONCE: i64 = 30;
 
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
@@ -93,6 +95,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/{id}/done", post(done_task))
         .route("/api/tasks/{id}", delete(delete_task).patch(patch_task))
+        .route("/api/completions", get(list_completions))
+        .route("/api/completions/{id}", delete(restore_completion))
         .route(
             "/api/public-url",
             get(public_url_status)
@@ -748,6 +752,37 @@ async fn delete_task(
     let user_id = id.user.id;
     if state
         .db(move |c| db::delete_task(c, user_id, task_id))
+        .await?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound)
+    }
+}
+
+// ---- history ----------------------------------------------------------------
+
+async fn list_completions(
+    State(state): State<AppState>,
+    id: Identity,
+) -> Result<Json<Vec<db::Completion>>, ApiError> {
+    let user_id = id.user.id;
+    Ok(Json(
+        state
+            .db(move |c| db::recent_completions(c, user_id, RECENT_ONCE))
+            .await?,
+    ))
+}
+
+/// Takes a completion back; a one-off returns to the list.
+async fn restore_completion(
+    State(state): State<AppState>,
+    id: Identity,
+    Path(completion_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let user_id = id.user.id;
+    if state
+        .db(move |c| db::restore_completion(c, user_id, completion_id))
         .await?
     {
         Ok(StatusCode::NO_CONTENT)
@@ -1423,6 +1458,35 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
         let (status, _) = call(&app, request(Method::GET, &path2, &[], None)).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_done_one_off_can_be_restored_from_history() {
+        let app = app();
+        let (_, body) = create(&app, json!({ "title": "oops" })).await;
+        let id = body["id"].as_i64().unwrap();
+        done(&app, id, None).await;
+        let (status, body) =
+            call(&app, request(Method::GET, "/api/completions", &[MAX], None)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body[0]["title"], "oops");
+        assert_eq!(body[0]["kind"], "once");
+        assert_eq!(body[0]["completed_at"], NOON_UTC);
+        let cid = body[0]["id"].as_i64().unwrap();
+
+        let path = format!("/api/completions/{cid}");
+        let (status, _) = call(
+            &app,
+            request(Method::DELETE, &path, &[("X-Realmdo-User", "eve")], None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "not eve's");
+        let (status, _) = call(&app, request(Method::DELETE, &path, &[MAX], None)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, body) = call(&app, request(Method::GET, "/api/tasks", &[MAX], None)).await;
+        assert_eq!(body[0]["title"], "oops", "back in the list");
+        let (_, body) = call(&app, request(Method::GET, "/api/completions", &[MAX], None)).await;
+        assert_eq!(body, json!([]));
     }
 
     #[tokio::test]

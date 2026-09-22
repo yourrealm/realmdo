@@ -276,16 +276,19 @@ private fun NotesSheet(task: Task, onDone: () -> Unit, onDismiss: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text(notesText(task.notes.orEmpty()), style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = {
+            // Close is the big, easy target; Done is small and to the side, so
+            // closing never completes the task by accident.
+            val close = { scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() } }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = {
                     onDone()
-                    scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
-                },
-                Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Check, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Done")
+                    close()
+                }) {
+                    Icon(Icons.Default.Check, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Done")
+                }
+                Button(onClick = { close() }, Modifier.weight(1f)) { Text("Close") }
             }
         }
     }

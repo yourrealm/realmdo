@@ -107,6 +107,13 @@ a bottom sheet, read-only). They stay out of the Live Update and out of
 `/public/`, whose URL secret is a weaker credential than a session or token.
 Decided 2026-09-23.
 
+**Done history.** A "done" page in the web UI lists the latest completion of
+every interval and slot task and the 30 latest archived one-offs, newest first,
+grouped by day. Restore deletes that completion row; a one-off also returns to
+the list, and an interval task falls back to its previous completion (restore
+again to step further). Deleting a task still deletes its history. Web only.
+Decided 2026-09-23.
+
 ### Stack
 
 1. **Backend: Rust.** One binary, SQLite (bundled rusqlite), embeds the web UI.
@@ -204,9 +211,10 @@ Decided 2026-09-23.
    Pasting the token by hand still works.
 4. **Screens:** setup (URL + token), the ranked list (add one-off by title, done
    per row, tap a row with notes to open them in a bottom sheet
-   (`ModalBottomSheet`) with Done, refresh on resume) and settings (the Live
-   Update switch, sign out). Tasks below urgency 0 are hidden, like the web UI.
-   Editing and the other kinds are web-only for now.
+   (`ModalBottomSheet`) with a small Done beside a wide Close, refresh on
+   resume) and settings (the Live Update switch, sign out). Tasks below urgency
+   0 are hidden, like the web UI. Editing and the other kinds are web-only for
+   now.
 5. **The Live Update.** One notification for the top-ranked task, static (no
    countdown, no bar). Title is the task; the status-bar chip
    (`shortCriticalText`) is the title cut to about twelve characters; the second
@@ -267,6 +275,9 @@ PATCH  /api/tasks/{id}           partial edit within the kind (kind cannot chang
 POST   /api/tasks/{id}/done      once: archives (idempotent); interval: records a completion, stays open;
                                  slot: optional { slot }, default the most pressing unchecked, no-op when all done
 DELETE /api/tasks/{id}           -> 204
+GET    /api/completions          latest completion per interval/slot task + 30 latest archived one-offs, newest first
+                                 [{ id, task_id, title, kind, slot, day, completed_at }]
+DELETE /api/completions/{id}     restore: removes the completion; a one-off reopens -> 204
 GET    /api/public-url           session only; { enabled }
 POST   /api/public-url           session only; -> 201 { path } exactly once; rotates
 DELETE /api/public-url           session only; disables

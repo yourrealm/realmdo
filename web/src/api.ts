@@ -57,6 +57,17 @@ export interface TaskPatch {
   notes?: string | null;
 }
 
+/** One checked-off task on the history page. */
+export interface Completion {
+  id: number;
+  task_id: number;
+  title: string;
+  kind: Kind;
+  slot: Slot | null;
+  day: string | null;
+  completed_at: number;
+}
+
 export interface Settings {
   timezone: string;
   slot_times: Record<Slot, string>;
@@ -123,6 +134,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+  completions: () => request<Completion[]>("/api/completions"),
+  restore: (id: number) =>
+    request<void>(`/api/completions/${id}`, { method: "DELETE" }),
   publicUrl: () => request<{ enabled: boolean }>("/api/public-url"),
   mintPublicUrl: () =>
     request<{ path: string }>("/api/public-url", { method: "POST" }),
