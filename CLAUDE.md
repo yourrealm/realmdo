@@ -21,9 +21,9 @@ carry optional free-text notes. `/public/{secret}/today` serves TRMNL, which
 polls it. The Android client (`android/`) is started: token sign-in, ranked
 list, add, done, and the top task pinned as an Android 16 Live Update. Verified
 on a Galaxy S24 (Android 16) on 2026-09-18. Tasks may carry timed steps, run
-aloud by the Android app, and Android lists hidden tasks under "Later" (both
-2026-09-25; the Android side not yet compiled or tried on a device). The
-decisions below are the spec. When one changes, change it here.
+aloud by the Android app, and Android lists hidden tasks under "Later"; both
+verified on the S24 on 2026-09-25. The decisions below are the spec. When one
+changes, change it here.
 
 ## Where to look in the Realm repo
 
