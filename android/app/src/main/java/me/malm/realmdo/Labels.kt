@@ -47,3 +47,22 @@ fun chip(t: Task, max: Int = 12): String {
     val atWord = cut.lastIndexOf(' ')
     return (if (atWord >= max / 2) cut.substring(0, atWord) else cut).trimEnd() + "…"
 }
+
+/** 90 -> "1:30". Mirrors the web UI. */
+fun clock(seconds: Int): String = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
+
+/** 90 -> "1 minute 30 seconds", for the voice. */
+fun spokenDuration(seconds: Int): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    fun unit(n: Int, name: String) = if (n == 1) "1 $name" else "$n ${name}s"
+    return when {
+        m == 0 -> unit(s, "second")
+        s == 0 -> unit(m, "minute")
+        else -> "${unit(m, "minute")} ${unit(s, "second")}"
+    }
+}
+
+/** What the voice says as a step begins: its words, then how long. */
+fun announcement(step: Step): String =
+    "${(step.speech ?: step.title).trimEnd('.', ' ')}. ${spokenDuration(step.seconds)}."

@@ -81,6 +81,8 @@ pub struct Task {
     pub slots: Option<Vec<Slot>>,
     /// Free text; `None` when empty. Kept across completions.
     pub notes: Option<String>,
+    /// A timed routine, run step by step on the phone; `None` when empty.
+    pub steps: Option<Vec<Step>>,
     pub created_at: i64,
     /// One-off: set when completed (archived).
     pub done_at: Option<i64>,
@@ -89,6 +91,20 @@ pub struct Task {
     /// Slot: the slots already checked on the day the row was read for.
     #[serde(skip)]
     pub checked_today: Vec<Slot>,
+}
+
+/// One timed step of a routine: what is shown, what is spoken and what is
+/// there to read while it runs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Step {
+    pub title: String,
+    /// Spoken instead of the title; `None` speaks the title.
+    #[serde(default)]
+    pub speech: Option<String>,
+    /// Instructions to read, before or during the step. Never spoken.
+    #[serde(default)]
+    pub details: Option<String>,
+    pub seconds: u32,
 }
 
 /// One completion row with its task, for the history page.
@@ -161,6 +177,8 @@ const MIGRATIONS: &[&str] = &[
         WHERE public_secret_hash IS NOT NULL;",
     // v6: free-text notes on a task.
     "ALTER TABLE tasks ADD COLUMN notes TEXT;",
+    // v7: timed steps on a task, as JSON like slots.
+    "ALTER TABLE tasks ADD COLUMN steps TEXT;",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -390,7 +408,8 @@ const TASK_SELECT: &str =
         t.created_at, t.done_at, t.notes,
         (SELECT MAX(c.completed_at) FROM completions c WHERE c.task_id = t.id),
         (SELECT GROUP_CONCAT(c.slot) FROM completions c
-            WHERE c.task_id = t.id AND c.day = :day AND c.slot IS NOT NULL)
+            WHERE c.task_id = t.id AND c.day = :day AND c.slot IS NOT NULL),
+        t.steps
      FROM tasks t";
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
@@ -399,6 +418,11 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         .map(|s| serde_json::from_str::<Vec<Slot>>(&s))
         .transpose()
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, Type::Text, Box::new(e)))?;
+    let steps: Option<String> = r.get(12)?;
+    let steps = steps
+        .map(|s| serde_json::from_str::<Vec<Step>>(&s))
+        .transpose()
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(12, Type::Text, Box::new(e)))?;
     let checked: Option<String> = r.get(11)?;
     // GROUP_CONCAT has no order; put the slots back in day order.
     let mut checked_today: Vec<Slot> = checked
@@ -414,6 +438,7 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         ramp_days: r.get(5)?,
         slots,
         notes: r.get(9)?,
+        steps,
         created_at: r.get(7)?,
         done_at: r.get(8)?,
         last_done_at: r.get(10)?,
@@ -455,6 +480,7 @@ pub struct NewTask<'a> {
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
     pub notes: Option<&'a str>,
+    pub steps: Option<&'a [Step]>,
 }
 
 pub fn insert_task(
@@ -468,10 +494,11 @@ pub fn insert_task(
         .slots
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
+    let steps = new.steps.map(steps_json);
     let id: i64 = conn.query_row(
         "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, notes,
-            created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) RETURNING id",
+            steps, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id",
         params![
             user_id,
             new.title,
@@ -481,11 +508,16 @@ pub fn insert_task(
             new.ramp_days,
             slots,
             new.notes,
+            steps,
             now
         ],
         |r| r.get(0),
     )?;
     get_task(conn, user_id, id, day).map(|t| t.expect("just inserted"))
+}
+
+fn steps_json(steps: &[Step]) -> String {
+    serde_json::to_string(steps).expect("steps serialize")
 }
 
 /// Changed fields of a task. The kind itself never changes.
@@ -496,6 +528,7 @@ pub struct TaskUpdate<'a> {
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
     pub notes: Option<&'a str>,
+    pub steps: Option<&'a [Step]>,
 }
 
 /// Rewrites a task's mutable columns. `None` when it is not this user's.
@@ -510,9 +543,10 @@ pub fn update_task(
         .slots
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
+    let steps = upd.steps.map(steps_json);
     let n = conn.execute(
         "UPDATE tasks SET title = ?3, due_on = ?4, after_days = ?5, ramp_days = ?6, slots = ?7,
-            notes = ?8
+            notes = ?8, steps = ?9
          WHERE id = ?1 AND user_id = ?2",
         params![
             id,
@@ -522,7 +556,8 @@ pub fn update_task(
             upd.after_days,
             upd.ramp_days,
             slots,
-            upd.notes
+            upd.notes,
+            steps
         ],
     )?;
     if n == 0 {
@@ -664,6 +699,7 @@ mod tests {
             ramp_days: None,
             slots: None,
             notes: None,
+            steps: None,
         }
     }
 
@@ -676,6 +712,7 @@ mod tests {
             ramp_days: ramp,
             slots: None,
             notes: None,
+            steps: None,
         }
     }
 
@@ -688,6 +725,7 @@ mod tests {
             ramp_days: None,
             slots: Some(slots.to_vec()),
             notes: None,
+            steps: None,
         }
     }
 
@@ -848,6 +886,7 @@ mod tests {
             ramp_days: None,
             slots: None,
             notes: Some("the blue one"),
+            steps: None,
         };
         assert!(
             update_task(&conn, eve.id, t.id, &upd, DAY)
@@ -867,6 +906,50 @@ mod tests {
             Some("the blue one"),
             "archived with it"
         );
+    }
+
+    #[test]
+    fn steps_round_trip_and_clear() {
+        let conn = memory();
+        let max = upsert_user(&conn, "max", 1).unwrap();
+        let t = insert_task(&conn, max.id, &every("yoga", 2, None), 10, DAY).unwrap();
+        assert_eq!(t.steps, None);
+        let steps = vec![
+            Step {
+                title: "Pigeon, left".into(),
+                speech: Some("Pigeon, left leg forward".into()),
+                details: Some("Square the hips.".into()),
+                seconds: 90,
+            },
+            Step {
+                title: "Frog".into(),
+                speech: None,
+                details: None,
+                seconds: 60,
+            },
+        ];
+        let mut upd = TaskUpdate {
+            title: "yoga",
+            due_on: None,
+            after_days: Some(2),
+            ramp_days: None,
+            slots: None,
+            notes: None,
+            steps: Some(&steps),
+        };
+        let t = update_task(&conn, max.id, t.id, &upd, DAY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(t.steps.as_ref(), Some(&steps));
+        let t = complete_task(&conn, max.id, t.id, 20, DAY, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(t.steps.as_ref(), Some(&steps), "kept across completions");
+        upd.steps = None;
+        let t = update_task(&conn, max.id, t.id, &upd, DAY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(t.steps, None);
     }
 
     #[test]

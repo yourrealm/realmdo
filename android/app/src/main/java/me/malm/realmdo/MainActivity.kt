@@ -20,7 +20,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,10 +41,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -62,6 +71,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,8 +81,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -137,11 +149,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App(vm: TasksViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val routineVm: RoutineViewModel = viewModel()
+    val routine by routineVm.state.collectAsStateWithLifecycle()
     var showSettings by rememberSaveable { mutableStateOf(false) }
     when {
         !state.configured -> SetupScreen(vm, state)
+        routine != null -> RoutineScreen(
+            routine!!,
+            routineVm,
+            // The list's copy, for a pending slot that moved during the run.
+            onDone = { task -> vm.done(state.tasks.find { it.id == task.id } ?: task) },
+        )
         showSettings -> SettingsScreen(vm, state, onBack = { showSettings = false })
-        else -> TasksScreen(vm, state, onSettings = { showSettings = true })
+        else -> TasksScreen(vm, state, onSettings = { showSettings = true }, onStart = routineVm::start)
     }
 }
 
@@ -171,9 +191,10 @@ private fun spin(active: Boolean): Float {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Unit) {
+private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Unit, onStart: (Task) -> Unit) {
     var title by rememberSaveable { mutableStateOf("") }
     var sheetId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var laterOpen by rememberSaveable { mutableStateOf(true) }
     val submit = {
         val t = title.trim()
         if (t.isNotEmpty()) {
@@ -209,36 +230,83 @@ private fun TasksScreen(vm: TasksViewModel, state: UiState, onSettings: () -> Un
             }
             state.background?.let { if (state.liveUpdate && it.held) HeldBanner(it, onSettings) }
             val visible = state.tasks.filter { it.urgency >= 0 }
+            val later = state.tasks.filter(::isLater)
+            val row = @Composable { task: Task ->
+                TaskRow(task, onOpen = { sheetId = task.id }, onDone = { vm.done(task) }, onStart = { onStart(task) })
+            }
             LazyColumn(Modifier.fillMaxSize()) {
-                items(visible, key = { it.id }) { task ->
-                    ListItem(
-                        modifier = if (task.notes == null) Modifier else Modifier.clickable { sheetId = task.id },
-                        headlineContent = {
-                            Text(task.title, fontWeight = if (task.important) FontWeight.Bold else null)
-                        },
-                        supportingContent = { detail(task)?.let { Text(it) } },
-                        trailingContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (task.notes != null) Icon(Icons.AutoMirrored.Filled.List, "Has notes")
-                                IconButton(onClick = { vm.done(task) }) { Icon(Icons.Default.Check, "Done") }
-                            }
-                        },
-                    )
-                    HorizontalDivider()
-                }
+                items(visible, key = { it.id }) { row(it) }
                 if (visible.isEmpty() && !state.loading) {
                     item { Text("Nothing to do.", Modifier.padding(16.dp)) }
+                }
+                if (later.isNotEmpty()) {
+                    item(key = "later") {
+                        ListItem(
+                            modifier = Modifier.clickable { laterOpen = !laterOpen },
+                            headlineContent = {
+                                Text(
+                                    "Later · ${later.size}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            },
+                            trailingContent = {
+                                Icon(
+                                    if (laterOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    if (laterOpen) "Hide later" else "Show later",
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                    }
+                    // Out of focus, but at hand to tick off early.
+                    if (laterOpen) items(later, key = { it.id }) { Box(Modifier.alpha(0.6f)) { row(it) } }
                 }
             }
         }
     }
     // Looked up by id so the sheet follows refreshes; it closes if the task goes.
-    val sheetTask = sheetId?.let { id -> state.tasks.find { it.id == id && it.notes != null } }
+    val sheetTask = sheetId?.let { id -> state.tasks.find { it.id == id && hasSheet(it) } }
     if (sheetTask != null) {
-        NotesSheet(sheetTask, onDone = { vm.done(sheetTask) }, onDismiss = { sheetId = null })
+        NotesSheet(
+            sheetTask,
+            onDone = { vm.done(sheetTask) },
+            onStart = { onStart(sheetTask) },
+            onDismiss = { sheetId = null },
+        )
     } else if (sheetId != null) {
         LaunchedEffect(Unit) { sheetId = null }
     }
+}
+
+/**
+ * Below the ranked list: what is not due yet but can be done early. A slot
+ * task whose slots are all checked is finished for the day and stays out.
+ */
+private fun isLater(t: Task): Boolean = t.urgency < 0 && !(t.kind == "slot" && t.pendingSlot == null)
+
+private fun hasSheet(t: Task): Boolean = t.notes != null || t.steps != null
+
+/** One task: tap for its notes and steps, play to run its steps, check for done. */
+@Composable
+private fun TaskRow(task: Task, onOpen: () -> Unit, onDone: () -> Unit, onStart: () -> Unit) {
+    ListItem(
+        modifier = if (hasSheet(task)) Modifier.clickable(onClick = onOpen) else Modifier,
+        headlineContent = {
+            Text(task.title, fontWeight = if (task.important) FontWeight.Bold else null)
+        },
+        supportingContent = { detail(task)?.let { Text(it) } },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (task.notes != null) Icon(Icons.AutoMirrored.Filled.List, "Has notes")
+                if (task.steps != null) {
+                    IconButton(onClick = onStart) { Icon(Icons.Default.PlayArrow, "Start") }
+                }
+                IconButton(onClick = onDone) { Icon(Icons.Default.Check, "Done") }
+            }
+        },
+    )
+    HorizontalDivider()
 }
 
 private val URL = Regex("""https?://\S+""")
@@ -258,10 +326,10 @@ private fun notesText(notes: String): AnnotatedString {
     }
 }
 
-/** A task's notes over the list, with Done at hand. */
+/** A task's notes and steps over the list, with Start and Done at hand. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NotesSheet(task: Task, onDone: () -> Unit, onDismiss: () -> Unit) {
+private fun NotesSheet(task: Task, onDone: () -> Unit, onStart: () -> Unit, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -273,12 +341,45 @@ private fun NotesSheet(task: Task, onDone: () -> Unit, onDismiss: () -> Unit) {
             detail(task)?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Spacer(Modifier.height(16.dp))
-            Text(notesText(task.notes.orEmpty()), style = MaterialTheme.typography.bodyLarge)
+            task.notes?.let {
+                Spacer(Modifier.height(16.dp))
+                Text(notesText(it), style = MaterialTheme.typography.bodyLarge)
+            }
+            task.steps?.let { steps ->
+                Spacer(Modifier.height(16.dp))
+                steps.forEachIndexed { i, step ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Text("${i + 1}. ${step.title}", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Text(clock(step.seconds), style = MaterialTheme.typography.bodyLarge)
+                    }
+                    step.details?.let {
+                        Text(
+                            it,
+                            Modifier.padding(start = 16.dp, bottom = 4.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(24.dp))
+            val close = { scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() } }
+            task.steps?.let { steps ->
+                FilledTonalButton(
+                    onClick = {
+                        onStart()
+                        close()
+                    },
+                    Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.PlayArrow, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Start · ${clock(steps.sumOf { it.seconds })}")
+                }
+                Spacer(Modifier.height(12.dp))
+            }
             // Close is the big, easy target; Done is small and to the side, so
             // closing never completes the task by accident.
-            val close = { scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() } }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = {
                     onDone()
@@ -290,6 +391,103 @@ private fun NotesSheet(task: Task, onDone: () -> Unit, onDismiss: () -> Unit) {
                 }
                 Button(onClick = { close() }, Modifier.weight(1f)) { Text("Close") }
             }
+        }
+    }
+}
+
+/**
+ * A routine running: the step, its countdown and what to read, with the
+ * controls under the thumb. The screen stays on while it is shown.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RoutineScreen(run: RoutineState, vm: RoutineViewModel, onDone: (Task) -> Unit) {
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
+    BackHandler(onBack = vm::stop)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(run.task.title) },
+                navigationIcon = {
+                    IconButton(onClick = vm::stop) { Icon(Icons.Default.Close, "Stop") }
+                },
+            )
+        },
+    ) { pad ->
+        Column(
+            Modifier.padding(pad).padding(horizontal = 24.dp, vertical = 16.dp).fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (run.finished) {
+                Text("All done", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    "${run.steps.size} steps · ${clock(run.steps.sumOf { it.seconds })}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = vm::previous) { Text("Back") }
+                    Button(
+                        onClick = {
+                            onDone(run.task)
+                            vm.stop()
+                        },
+                        Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.Check, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Mark done")
+                    }
+                }
+                OutlinedButton(onClick = vm::stop, Modifier.fillMaxWidth()) { Text("Close") }
+            } else {
+                RunningStep(run, vm)
+            }
+        }
+    }
+}
+
+/** The current step: its countdown, what to read, what comes next and the controls. */
+@Composable
+private fun ColumnScope.RunningStep(run: RoutineState, vm: RoutineViewModel) {
+    val step = run.step
+    Text(
+        "Step ${run.index + 1} of ${run.steps.size}",
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(step.title, style = MaterialTheme.typography.headlineMedium)
+    // Rounded up: a step reads 0:01 until its last second is gone.
+    Text(clock(((run.leftMs + 999) / 1000).toInt()), style = MaterialTheme.typography.displayLarge)
+    LinearProgressIndicator(
+        progress = { 1f - run.leftMs / (step.seconds * 1000f) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+        step.details?.let { Text(notesText(it), style = MaterialTheme.typography.bodyLarge) }
+    }
+    Text(
+        run.next?.let { "Next: ${it.title} · ${clock(it.seconds)}" } ?: "Last step",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = vm::previous, Modifier.size(64.dp)) {
+            Icon(painterResource(R.drawable.ic_skip_previous), "Previous", Modifier.size(36.dp))
+        }
+        FilledIconButton(onClick = if (run.running) vm::pause else vm::resume, Modifier.size(88.dp)) {
+            if (run.running) Icon(painterResource(R.drawable.ic_pause), "Pause", Modifier.size(48.dp))
+            else Icon(Icons.Default.PlayArrow, "Resume", Modifier.size(48.dp))
+        }
+        IconButton(onClick = vm::next, Modifier.size(64.dp)) {
+            Icon(painterResource(R.drawable.ic_skip_next), "Next", Modifier.size(36.dp))
         }
     }
 }

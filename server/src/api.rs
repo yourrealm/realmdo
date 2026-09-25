@@ -35,6 +35,12 @@ const MAX_USERNAME: usize = 64;
 const MAX_TITLE: usize = 500;
 const MAX_NOTES: usize = 4000;
 const MAX_TOKEN_NAME: usize = 64;
+const MAX_STEPS: usize = 50;
+const MAX_STEP_TITLE: usize = 200;
+const MAX_STEP_SPEECH: usize = 500;
+const MAX_STEP_DETAILS: usize = 2000;
+/// Six hours: longer than any one step of a routine.
+const MAX_STEP_SECONDS: u32 = 6 * 3600;
 const MAX_DAYS: i64 = 3650;
 /// Archived one-offs on the history page.
 const RECENT_ONCE: i64 = 30;
@@ -443,6 +449,7 @@ struct NewTask {
     ramp_days: Option<i64>,
     slots: Option<Vec<Slot>>,
     notes: Option<String>,
+    steps: Option<Vec<db::Step>>,
 }
 
 fn default_kind() -> db::Kind {
@@ -463,6 +470,45 @@ fn clean_notes(notes: Option<String>) -> Result<Option<String>, ApiError> {
         )));
     }
     Ok(Some(n))
+}
+
+/// Trims each step and checks its limits. No steps means none.
+fn clean_steps(steps: Option<Vec<db::Step>>) -> Result<Option<Vec<db::Step>>, ApiError> {
+    let steps = steps.unwrap_or_default();
+    if steps.is_empty() {
+        return Ok(None);
+    }
+    if steps.len() > MAX_STEPS {
+        return Err(ApiError::BadRequest(format!("at most {MAX_STEPS} steps")));
+    }
+    let text = |s: Option<String>, max: usize, what: &str| -> Result<Option<String>, ApiError> {
+        let Some(s) = s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+            return Ok(None);
+        };
+        if s.chars().count() > max {
+            return Err(ApiError::BadRequest(format!(
+                "step {what} must be at most {max} characters"
+            )));
+        }
+        Ok(Some(s))
+    };
+    steps
+        .into_iter()
+        .map(|step| {
+            let title = text(Some(step.title), MAX_STEP_TITLE, "title")?
+                .ok_or_else(|| bad("every step needs a title"))?;
+            if !(1..=MAX_STEP_SECONDS).contains(&step.seconds) {
+                return Err(bad("step seconds must be 1 to 21600"));
+            }
+            Ok(db::Step {
+                title,
+                speech: text(step.speech, MAX_STEP_SPEECH, "speech")?,
+                details: text(step.details, MAX_STEP_DETAILS, "details")?,
+                seconds: step.seconds,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
 /// Checks the fields that belong to each kind. Returns the cleaned due date
@@ -531,6 +577,7 @@ async fn create_task(
     }
     let (due_on, slots) = validate_new_task(&body)?;
     let notes = clean_notes(body.notes)?;
+    let steps = clean_steps(body.steps)?;
     let ctx = Ctx::new(&state, id.user);
     let user_id = ctx.user.id;
     let now = ctx.now;
@@ -545,6 +592,7 @@ async fn create_task(
                 ramp_days: body.ramp_days,
                 slots,
                 notes: notes.as_deref(),
+                steps: steps.as_deref(),
             };
             db::insert_task(c, user_id, &new, now, &day)
         })
@@ -553,8 +601,8 @@ async fn create_task(
 }
 
 /// A partial edit. Absent fields keep their value; `due_on: null` clears the
-/// date, `ramp_days: null` returns to the default ramp and `notes: null` (or
-/// blank) clears the notes.
+/// date, `ramp_days: null` returns to the default ramp, `notes: null` (or
+/// blank) clears the notes and `steps: null` (or `[]`) clears the steps.
 #[derive(Deserialize)]
 struct TaskPatch {
     title: Option<String>,
@@ -567,6 +615,8 @@ struct TaskPatch {
     slots: Option<Vec<Slot>>,
     #[serde(default, deserialize_with = "double_option")]
     notes: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    steps: Option<Option<Vec<db::Step>>>,
 }
 
 /// Keeps "absent" (outer None, via default) apart from "null" (Some(None)):
@@ -618,6 +668,10 @@ async fn patch_task(
     let notes = match patch.notes {
         Some(n) => clean_notes(n)?,
         None => current.notes.clone(),
+    };
+    let steps = match patch.steps {
+        Some(s) => clean_steps(s)?,
+        None => current.steps.clone(),
     };
     match current.kind {
         db::Kind::Once => {
@@ -681,6 +735,7 @@ async fn patch_task(
                 ramp_days,
                 slots,
                 notes: notes.as_deref(),
+                steps: steps.as_deref(),
             };
             db::update_task(c, user_id, task_id, &upd, &day)
         })
@@ -846,7 +901,8 @@ struct PublicToday {
 }
 
 /// Today's visible list for callers that cannot set headers (TRMNL pull).
-/// The opaque secret in the path is the whole credential, so notes stay out.
+/// The opaque secret in the path is the whole credential, so notes and steps
+/// stay out.
 async fn public_today(
     State(state): State<AppState>,
     Path(secret): Path<String>,
@@ -862,7 +918,14 @@ async fn public_today(
     let tasks = state.db(move |c| db::open_tasks(c, user_id, &day)).await?;
     let mut views: Vec<TaskView> = tasks
         .into_iter()
-        .map(|t| view(db::Task { notes: None, ..t }, &ctx))
+        .map(|t| {
+            let t = db::Task {
+                notes: None,
+                steps: None,
+                ..t
+            };
+            view(t, &ctx)
+        })
         .filter(|v| v.urgency >= 0.0)
         .collect();
     sort_views(&mut views);
@@ -1374,9 +1437,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn steps_are_trimmed_validated_and_cleared() {
+        let app = app();
+        let (status, body) = create(
+            &app,
+            json!({ "title": "yoga", "kind": "interval", "after_days": 2, "steps": [
+                { "title": " Frog ", "seconds": 90 },
+                { "title": "Pigeon, left", "speech": "Pigeon. Left leg forward.",
+                  "details": "  Square the hips.\nBreathe.  ", "seconds": 60 },
+            ] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let id = body["id"].as_i64().unwrap();
+        assert_eq!(
+            body["steps"],
+            json!([
+                { "title": "Frog", "speech": null, "details": null, "seconds": 90 },
+                { "title": "Pigeon, left", "speech": "Pigeon. Left leg forward.",
+                  "details": "Square the hips.\nBreathe.", "seconds": 60 },
+            ])
+        );
+        let (_, body) = create(&app, json!({ "title": "plain" })).await;
+        assert_eq!(body["steps"], Value::Null);
+
+        let patch = |body: Value| {
+            request(
+                Method::PATCH,
+                &format!("/api/tasks/{id}"),
+                &[MAX],
+                Some(body),
+            )
+        };
+        for bad in [
+            json!({ "steps": [{ "title": "x", "seconds": 0 }] }),
+            json!({ "steps": [{ "title": "x", "seconds": MAX_STEP_SECONDS + 1 }] }),
+            json!({ "steps": [{ "title": " ", "seconds": 10 }] }),
+            json!({ "steps": [{ "title": "x" }] }),
+            json!({ "steps": [{ "title": "x", "seconds": 10, "details": "d".repeat(MAX_STEP_DETAILS + 1) }] }),
+            json!({ "steps": vec![json!({ "title": "x", "seconds": 1 }); MAX_STEPS + 1] }),
+        ] {
+            let (status, _) = call(&app, patch(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        }
+        let (_, body) = call(&app, patch(json!({ "title": "yoga!" }))).await;
+        assert_eq!(body["steps"][0]["title"], "Frog", "absent keeps them");
+        let (_, body) = call(&app, patch(json!({ "steps": [] }))).await;
+        assert_eq!(body["steps"], Value::Null, "empty clears");
+        call(
+            &app,
+            patch(json!({ "steps": [{ "title": "x", "seconds": 5 }] })),
+        )
+        .await;
+        let (_, body) = call(&app, patch(json!({ "steps": null }))).await;
+        assert_eq!(body["steps"], Value::Null, "null clears");
+    }
+
+    #[tokio::test]
     async fn the_public_url_reads_one_users_visible_list_only() {
         let app = app();
-        let (_, body) = create(&app, json!({ "title": "visible", "notes": "private" })).await;
+        let (_, body) = create(
+            &app,
+            json!({ "title": "visible", "notes": "private",
+                    "steps": [{ "title": "private too", "seconds": 5 }] }),
+        )
+        .await;
         assert_eq!(body["notes"], "private");
         create(&app, json!({ "title": "hidden", "due_on": "2026-12-24" })).await;
         call(
@@ -1442,6 +1567,7 @@ mod tests {
             "hidden and other users' tasks stay out"
         );
         assert_eq!(body["tasks"][0]["notes"], Value::Null, "notes stay out");
+        assert_eq!(body["tasks"][0]["steps"], Value::Null, "steps stay out");
 
         // Regenerating rotates; disabling closes the door.
         let (_, body) = call(&app, request(Method::POST, "/api/public-url", &[MAX], None)).await;

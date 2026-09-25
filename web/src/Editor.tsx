@@ -7,6 +7,7 @@ import {
   type Task,
   type TaskPatch,
 } from "./api.ts";
+import { fromDrafts, StepsEditor, toDrafts } from "./Steps.tsx";
 
 /** Inline editor for one task. Fields follow the kind; the kind is fixed. */
 export function TaskEditor(
@@ -26,11 +27,21 @@ export function TaskEditor(
   );
   const [slots, setSlots] = useState<Slot[]>(task.slots ?? []);
   const [notes, setNotes] = useState(task.notes ?? "");
+  const [steps, setSteps] = useState(() => toDrafts(task.steps));
 
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    const patch: TaskPatch = { title, notes: notes || null };
+    const cleaned = fromDrafts(steps);
+    if (typeof cleaned === "string") {
+      onError(new Error(cleaned));
+      return;
+    }
+    const patch: TaskPatch = {
+      title,
+      notes: notes || null,
+      steps: cleaned.length ? cleaned : null,
+    };
     if (task.kind === "once") patch.due_on = dueOn || null;
     if (task.kind === "interval") {
       patch.after_days = Number(after || 0);
@@ -108,6 +119,7 @@ export function TaskEditor(
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
         }}
       />
+      <StepsEditor drafts={steps} onChange={setSteps} />
       <div className="actions">
         <button type="submit">Save</button>
         <button type="button" className="link" onClick={onCancel}>

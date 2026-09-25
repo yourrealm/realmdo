@@ -20,8 +20,10 @@ done, add). Tasks are editable (PATCH, inline in the web UI, kind fixed) and
 carry optional free-text notes. `/public/{secret}/today` serves TRMNL, which
 polls it. The Android client (`android/`) is started: token sign-in, ranked
 list, add, done, and the top task pinned as an Android 16 Live Update. Verified
-on a Galaxy S24 (Android 16) on 2026-09-18. The decisions below are the spec.
-When one changes, change it here.
+on a Galaxy S24 (Android 16) on 2026-09-18. Tasks may carry timed steps, run
+aloud by the Android app, and Android lists hidden tasks under "Later" (both
+2026-09-25; the Android side not yet compiled or tried on a device). The
+decisions below are the spec. When one changes, change it here.
 
 ## Where to look in the Realm repo
 
@@ -106,6 +108,21 @@ in three places: the web row (a `≡` toggle, `o` on the keyboard), the widget (
 a bottom sheet, read-only). They stay out of the Live Update and out of
 `/public/`, whose URL secret is a weaker credential than a session or token.
 Decided 2026-09-23.
+
+**Steps.** Any task may carry a routine: an ordered list of timed steps (yoga, a
+stretch set). A step has a title (shown), optional speech (spoken instead of the
+title), optional details (read, never spoken) and an exact duration in seconds.
+There are no ranges and no "per side": left and right are two steps. Steps
+belong to the task like notes: kept across completions, stored as JSON in
+`tasks.steps`, edited in the web editor only (rows with m:ss durations), shown
+under the web row's `≡` toggle, kept out of `/public/`. The Android app runs
+them: one step at a time, announced in English by the system text-to-speech
+("Frog. 1 minute 30 seconds."), a spoken "10 seconds" before a step of 20 s or
+more ends, then the next step. Pause, previous (restarts a step more than 3 s
+in, else steps back) and next; the screen stays on while it runs (no foreground
+service). Finishing never completes the task: the last screen offers "Mark
+done". Limits: 50 steps, title 200, speech 500, details 2000 characters, 1 s to
+6 h per step. Decided 2026-09-25.
 
 **Done history.** A "done" page in the web UI lists the latest completion of
 every interval and slot task and the 30 latest archived one-offs, newest first,
@@ -210,11 +227,14 @@ Decided 2026-09-23.
    `realmdo://pair` intent filter so the phone's own camera app can open it.
    Pasting the token by hand still works.
 4. **Screens:** setup (URL + token), the ranked list (add one-off by title, done
-   per row, tap a row with notes to open them in a bottom sheet
-   (`ModalBottomSheet`) with a small Done beside a wide Close, refresh on
-   resume) and settings (the Live Update switch, sign out). Tasks below urgency
-   0 are hidden, like the web UI. Editing and the other kinds are web-only for
-   now.
+   per row, tap a row with notes or steps to open them in a bottom sheet
+   (`ModalBottomSheet`) with Start for steps and a small Done beside a wide
+   Close, a play button on rows with steps, refresh on resume), the routine
+   player (see "Steps") and settings (the Live Update switch, sign out). Tasks
+   below urgency 0 sit in a dimmed, collapsible "Later" section under the list,
+   so an upcoming slot or a not-yet-due interval can be ticked off early; a slot
+   task with every slot checked stays out. The Live Update still takes only the
+   visible list. Editing and the other kinds are web-only for now.
 5. **The Live Update.** One notification for the top-ranked task, static (no
    countdown, no bar). Title is the task; the status-bar chip
    (`shortCriticalText`) is the title cut to about twelve characters; the second
@@ -254,9 +274,9 @@ Decided 2026-09-23.
    system-only `READ_SEARCH_INDEXABLES`) and App info as the fallback.
 8. Root scripts `android:build` and `android:install` wrap `./gradlew`; CI runs
    `testDebugUnitTest lintDebug assembleDebug` in its own job. JVM tests cover
-   the pairing parser, the labels and the task JSON; they pull the real
-   `org.json` because android.jar only stubs it. `local.properties` points
-   `sdk.dir` at the SDK and is git-ignored.
+   the pairing parser, the labels (durations and the spoken step included) and
+   the task JSON; they pull the real `org.json` because android.jar only stubs
+   it. `local.properties` points `sdk.dir` at the SDK and is git-ignored.
 
 ### API
 
@@ -265,13 +285,14 @@ GET    /api/me                   { username, via: "session" | "token" }
 GET    /api/settings             { timezone, slot_times: { morning, before_lunch, afternoon, evening } } (HH:MM)
 PUT    /api/settings             same body; validated (IANA zone, HH:MM, increasing)
 GET    /api/tasks                open tasks, sorted by urgency desc, with urgency + important
-POST   /api/tasks                { title, kind?: "once" | "interval" | "slot", due_on?, after_days?, ramp_days?, slots?, notes? } -> 201
+POST   /api/tasks                { title, kind?: "once" | "interval" | "slot", due_on?, after_days?, ramp_days?, slots?, notes?, steps? } -> 201
                                  once: optional due_on; interval: after_days required, ramp_days optional;
                                  slot: slots required (subset of morning, before_lunch, afternoon, evening)
                                  every task view carries urgency, important, today (slot statuses) and pending_slot
 PATCH  /api/tasks/{id}           partial edit within the kind (kind cannot change);
                                  due_on: null clears, ramp_days: null returns to default,
-                                 notes: null or blank clears (trimmed, at most 4000 chars)
+                                 notes: null or blank clears (trimmed, at most 4000 chars);
+                                 steps: [{ title, speech?, details?, seconds }], null or [] clears
 POST   /api/tasks/{id}/done      once: archives (idempotent); interval: records a completion, stays open;
                                  slot: optional { slot }, default the most pressing unchecked, no-op when all done
 DELETE /api/tasks/{id}           -> 204
@@ -281,7 +302,7 @@ DELETE /api/completions/{id}     restore: removes the completion; a one-off reop
 GET    /api/public-url           session only; { enabled }
 POST   /api/public-url           session only; -> 201 { path } exactly once; rotates
 DELETE /api/public-url           session only; disables
-GET    /public/{secret}/today    no auth; { date, username, tasks } (visible tasks only, notes always null)
+GET    /public/{secret}/today    no auth; { date, username, tasks } (visible tasks only, notes and steps always null)
 GET    /api/tokens               session only
 POST   /api/tokens               { name } -> 201, carries `secret` exactly once
 DELETE /api/tokens/{id}          session only, -> 204

@@ -18,10 +18,14 @@
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
         tools:ignore="BatteryLife" />
 
-    <!-- So the app can see whether Samsung's battery settings page exists. -->
+    <!-- So the app can see whether Samsung's battery settings page exists,
+         and reach the text-to-speech engine that reads routines aloud. -->
     <queries>
         <intent>
             <action android:name="com.samsung.android.sm.ACTION_BATTERY" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 

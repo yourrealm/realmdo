@@ -65,4 +65,31 @@ class LabelsTest {
         assertEquals("Supercalifra…", chip(task("once").copy(title = "Supercalifragilistic")))
         assertEquals("Call mum", chip(task("once").copy(title = "  Call mum ")))
     }
+
+    @Test
+    fun durationsReadAndSpoken() {
+        assertEquals("1:30", clock(90))
+        assertEquals("0:05", clock(5))
+        assertEquals("12:00", clock(720))
+        assertEquals("45 seconds", spokenDuration(45))
+        assertEquals("1 second", spokenDuration(1))
+        assertEquals("2 minutes", spokenDuration(120))
+        assertEquals("1 minute 30 seconds", spokenDuration(90))
+    }
+
+    @Test
+    fun aStepIsAnnouncedBySpeechElseTitle() {
+        assertEquals("Frog. 1 minute.", announcement(Step("Frog", null, null, 60)))
+        assertEquals(
+            "Pigeon. Left leg forward. 1 minute 30 seconds.",
+            announcement(Step("Pigeon, left", "Pigeon. Left leg forward.", null, 90)),
+        )
+    }
+
+    @Test
+    fun previousRestartsAStepUnderWayElseStepsBack() {
+        assertEquals(2, previousIndex(2, elapsedMs = 10_000))
+        assertEquals(1, previousIndex(2, elapsedMs = 1_000))
+        assertEquals(0, previousIndex(0, elapsedMs = 0))
+    }
 }

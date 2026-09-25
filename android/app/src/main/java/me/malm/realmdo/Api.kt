@@ -6,6 +6,25 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+/** One timed step of a routine: shown, spoken, and read but never spoken. */
+data class Step(
+    val title: String,
+    /** Spoken instead of the title. */
+    val speech: String?,
+    /** Instructions to read before or during the step. */
+    val details: String?,
+    val seconds: Int,
+) {
+    companion object {
+        fun from(o: JSONObject): Step = Step(
+            title = o.getString("title"),
+            speech = o.optString("speech").takeIf { !o.isNull("speech") && it.isNotEmpty() },
+            details = o.optString("details").takeIf { !o.isNull("details") && it.isNotEmpty() },
+            seconds = o.getInt("seconds"),
+        )
+    }
+}
+
 /** One open task as `GET /api/tasks` returns it. */
 data class Task(
     val id: Long,
@@ -22,6 +41,8 @@ data class Task(
     val pendingSlot: String?,
     /** Free text, edited in the web UI. */
     val notes: String?,
+    /** A timed routine, edited in the web UI. */
+    val steps: List<Step>? = null,
 ) {
     companion object {
         fun from(o: JSONObject): Task = Task(
@@ -41,6 +62,9 @@ data class Task(
             },
             pendingSlot = o.optString("pending_slot").takeIf { !o.isNull("pending_slot") },
             notes = o.optString("notes").takeIf { !o.isNull("notes") && it.isNotEmpty() },
+            steps = o.optJSONArray("steps")?.let { arr ->
+                (0 until arr.length()).map { Step.from(arr.getJSONObject(it)) }
+            }?.takeIf { it.isNotEmpty() },
         )
     }
 }

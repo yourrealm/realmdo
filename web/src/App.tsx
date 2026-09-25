@@ -16,6 +16,7 @@ import {
 import { Settings } from "./Settings.tsx";
 import { TaskEditor } from "./Editor.tsx";
 import { Done } from "./Done.tsx";
+import { StepList } from "./Steps.tsx";
 
 const DAY_MS = 86_400_000;
 
@@ -68,11 +69,21 @@ function NotesToggle(
       className={`link notes-toggle${open ? " open" : ""}`}
       aria-label={open ? "Hide notes" : "Show notes"}
       aria-expanded={open}
-      title="Notes"
+      title="Notes and steps"
       onClick={onClick}
     >
       ≡
     </button>
+  );
+}
+
+/// What the ≡ toggle opens: the notes, then the steps.
+function Expanded({ task }: { task: Task }) {
+  return (
+    <>
+      {task.notes && <Notes text={task.notes} />}
+      {task.steps && <StepList steps={task.steps} />}
+    </>
   );
 }
 
@@ -183,7 +194,9 @@ export function App() {
           if (task) setEditing(task.id);
           break;
         case "o":
-          if (task?.notes) setOpen(open === task.id ? null : task.id);
+          if (task?.notes || task?.steps) {
+            setOpen(open === task.id ? null : task.id);
+          }
           break;
         case "n":
         case "/":
@@ -333,7 +346,7 @@ export function App() {
                         >
                           {t.title}
                         </span>
-                        {t.notes && (
+                        {(t.notes || t.steps) && (
                           <NotesToggle
                             open={open === t.id}
                             onClick={() => setOpen(open === t.id ? null : t.id)}
@@ -351,7 +364,7 @@ export function App() {
                             {SLOT_LABEL[slot]}
                           </button>
                         ))}
-                        {t.notes && open === t.id && <Notes text={t.notes} />}
+                        {open === t.id && <Expanded task={t} />}
                       </>
                     )}
                 </li>
@@ -396,13 +409,13 @@ export function App() {
                         {t.title}
                       </span>
                       {detail(t) && <span className="due">{detail(t)}</span>}
-                      {t.notes && (
+                      {(t.notes || t.steps) && (
                         <NotesToggle
                           open={open === t.id}
                           onClick={() => setOpen(open === t.id ? null : t.id)}
                         />
                       )}
-                      {t.notes && open === t.id && <Notes text={t.notes} />}
+                      {open === t.id && <Expanded task={t} />}
                     </>
                   )}
               </li>

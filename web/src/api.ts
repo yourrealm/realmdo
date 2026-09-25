@@ -20,6 +20,16 @@ export interface SlotStatus {
   state: SlotState;
 }
 
+/** One timed step of a routine, run on the phone. */
+export interface Step {
+  title: string;
+  /** Spoken instead of the title. */
+  speech: string | null;
+  /** Read, never spoken. */
+  details: string | null;
+  seconds: number;
+}
+
 export interface Task {
   id: number;
   title: string;
@@ -29,6 +39,7 @@ export interface Task {
   ramp_days: number | null;
   slots: Slot[] | null;
   notes: string | null;
+  steps: Step[] | null;
   created_at: number;
   done_at: number | null;
   last_done_at: number | null;
@@ -55,6 +66,7 @@ export interface TaskPatch {
   ramp_days?: number | null;
   slots?: Slot[];
   notes?: string | null;
+  steps?: Step[] | null;
 }
 
 /** One checked-off task on the history page. */

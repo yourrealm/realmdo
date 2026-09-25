@@ -68,4 +68,36 @@ class TaskJsonTest {
         assertEquals(6L, t.afterDays)
         assertEquals("2026-09-20", t.dueOn)
     }
+
+    @Test
+    fun stepsKeepTheirOrderAndOptionalParts() {
+        val t = Task.from(
+            JSONObject(
+                """{"id":4,"title":"Yoga","kind":"interval","due_on":null,"after_days":2,"ramp_days":null,
+                   "slots":null,"created_at":1,"done_at":null,"last_done_at":null,"urgency":-0.5,"important":false,
+                   "today":null,"pending_slot":null,
+                   "steps":[{"title":"Frog","speech":null,"details":null,"seconds":90},
+                            {"title":"Pigeon, left","speech":"Pigeon. Left leg forward.","details":"Square the hips.","seconds":60}]}""",
+            ),
+        )
+        assertEquals(
+            listOf(
+                Step("Frog", null, null, 90),
+                Step("Pigeon, left", "Pigeon. Left leg forward.", "Square the hips.", 60),
+            ),
+            t.steps,
+        )
+    }
+
+    @Test
+    fun noStepsIsNull() {
+        val t = Task.from(
+            JSONObject(
+                """{"id":5,"title":"Plain","kind":"once","due_on":null,"after_days":null,"ramp_days":null,
+                   "slots":null,"created_at":1,"done_at":null,"last_done_at":null,"urgency":0.5,"important":false,
+                   "today":null,"pending_slot":null,"steps":null}""",
+            ),
+        )
+        assertNull(t.steps)
+    }
 }
