@@ -23,6 +23,12 @@ data class Step(
             seconds = o.getInt("seconds"),
         )
     }
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("title", title)
+        .put("speech", speech ?: JSONObject.NULL)
+        .put("details", details ?: JSONObject.NULL)
+        .put("seconds", seconds)
 }
 
 /** One open task as `GET /api/tasks` returns it. */
@@ -39,10 +45,16 @@ data class Task(
     val today: List<Pair<String, String>>?,
     /** Slot tasks: the slot a bare "done" would check. */
     val pendingSlot: String?,
-    /** Free text, edited in the web UI. */
+    /** Free text. */
     val notes: String?,
-    /** A timed routine, edited in the web UI. */
+    /** A timed routine. */
     val steps: List<Step>? = null,
+    /** Interval: days from appearing to important; null is the default. */
+    val rampDays: Long? = null,
+    /** Slot: which slots of the day, in day order. */
+    val slots: List<String>? = null,
+    /** Unix seconds; an interval task's clock starts here until its first completion. */
+    val createdAt: Long = 0,
 ) {
     companion object {
         fun from(o: JSONObject): Task = Task(
@@ -65,6 +77,33 @@ data class Task(
             steps = o.optJSONArray("steps")?.let { arr ->
                 (0 until arr.length()).map { Step.from(arr.getJSONObject(it)) }
             }?.takeIf { it.isNotEmpty() },
+            rampDays = if (o.isNull("ramp_days")) null else o.optLong("ramp_days"),
+            slots = o.optJSONArray("slots")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } },
+            createdAt = o.optLong("created_at"),
+        )
+    }
+}
+
+/** One row of the done history, as `GET /api/completions` returns it. */
+data class Completion(
+    val id: Long,
+    val taskId: Long,
+    val title: String,
+    val kind: String,
+    val slot: String?,
+    /** The user's local day it was for, `YYYY-MM-DD`; absent on old rows. */
+    val day: String?,
+    val completedAt: Long,
+) {
+    companion object {
+        fun from(o: JSONObject): Completion = Completion(
+            id = o.getLong("id"),
+            taskId = o.getLong("task_id"),
+            title = o.getString("title"),
+            kind = o.getString("kind"),
+            slot = o.optString("slot").takeIf { !o.isNull("slot") && it.isNotEmpty() },
+            day = o.optString("day").takeIf { !o.isNull("day") && it.isNotEmpty() },
+            completedAt = o.getLong("completed_at"),
         )
     }
 }
@@ -84,15 +123,24 @@ class Api(private val baseUrl: String, private val token: String) {
     /** `GET /api/me`, the username. */
     fun me(): String = request("GET", "/api/me").getString("username")
 
-    /** Open tasks, sorted by urgency, most urgent first. */
-    fun tasks(): List<Task> {
-        val arr = requestArray("GET", "/api/tasks")
-        return (0 until arr.length()).map { Task.from(arr.getJSONObject(it)) }
-    }
+    /** Open tasks in the user's order. */
+    fun tasks(): List<Task> = taskList(requestArray("GET", "/api/tasks"))
 
     /** A one-off task with just a title. */
-    fun add(title: String): Task =
-        Task.from(request("POST", "/api/tasks", JSONObject().put("title", title).put("kind", "once")))
+    fun add(title: String): Task = create(JSONObject().put("title", title).put("kind", "once"))
+
+    fun create(body: JSONObject): Task = Task.from(request("POST", "/api/tasks", body))
+
+    /** A partial edit; see [Draft.toJson] for what it sends. */
+    fun update(id: Long, body: JSONObject): Task = Task.from(request("PATCH", "/api/tasks/$id", body))
+
+    fun delete(id: Long) {
+        raw("DELETE", "/api/tasks/$id", null)
+    }
+
+    /** Puts the open tasks in this order, first to last; answers the new list. */
+    fun order(ids: List<Long>): List<Task> =
+        taskList(requestArray("PUT", "/api/tasks/order", JSONObject().put("ids", JSONArray(ids))))
 
     /** Marks a task done. `slot` names the slot to check; null takes the most pressing. */
     fun done(id: Long, slot: String? = null) {
@@ -101,12 +149,32 @@ class Api(private val baseUrl: String, private val token: String) {
         request("POST", "/api/tasks/$id/done", body)
     }
 
+    /** The done history, newest first. */
+    fun completions(): List<Completion> {
+        val arr = requestArray("GET", "/api/completions")
+        return (0 until arr.length()).map { Completion.from(arr.getJSONObject(it)) }
+    }
+
+    /** Undoes one completion; a one-off returns to the list. */
+    fun restore(completionId: Long) {
+        raw("DELETE", "/api/completions/$completionId", null)
+    }
+
+    /** Slot name to its start time, `HH:MM`. */
+    fun slotTimes(): Map<String, String> {
+        val times = request("GET", "/api/settings").getJSONObject("slot_times")
+        return times.keys().asSequence().associateWith { times.getString(it) }
+    }
+
+    private fun taskList(arr: JSONArray): List<Task> = (0 until arr.length()).map { Task.from(arr.getJSONObject(it)) }
+
     private fun request(method: String, path: String, body: JSONObject? = null): JSONObject {
         val text = raw(method, path, body)
         return if (text.isBlank()) JSONObject() else JSONObject(text)
     }
 
-    private fun requestArray(method: String, path: String): JSONArray = JSONArray(raw(method, path, null))
+    private fun requestArray(method: String, path: String, body: JSONObject? = null): JSONArray =
+        JSONArray(raw(method, path, body))
 
     private fun raw(method: String, path: String, body: JSONObject?): String {
         val conn = URL(baseUrl + path).openConnection() as HttpURLConnection

@@ -22,8 +22,14 @@ polls it. The Android client (`android/`) is started: token sign-in, ranked
 list, add, done, and the top task pinned as an Android 16 Live Update. Verified
 on a Galaxy S24 (Android 16) on 2026-09-18. Tasks may carry timed steps, run
 aloud by the Android app, and Android lists hidden tasks under "Later"; both
-verified on the S24 on 2026-09-25. The decisions below are the spec. When one
-changes, change it here.
+verified on the S24 on 2026-09-25. On 2026-09-27 the list became the user's own
+order (dragged on Android) and Android learned everything the web UI did except
+settings, tokens and the public URL, in a new design (see "Android, as built");
+unit-tested; Today and Order seen on the S24 the same day, the editors not yet
+exercised there. The web UI is to be replaced by a Realm page for tokens, the
+public URL and settings once `QrCode` lands in the SDK (holden ticket
+`qr-code-in-sdk-ui`). The decisions below are the spec. When one changes, change
+it here.
 
 ## Where to look in the Realm repo
 
@@ -77,9 +83,15 @@ Three kinds. Every task belongs to one user.
    Example: brush teeth, before-lunch + evening. Resets daily. Slot times are
    per-user settings.
 
-**Urgency** is one number per task, computed on read, never stored. The main
-view is one list per user sorted by urgency, descending; a task below 0 is
-hidden. Sketch, to be settled against real use:
+**Order.** The list is one per user, in the order the user sets by dragging
+(Android's Order tab). Urgency does not move a task; it only decides what shows
+and what is important. New tasks go to the top. Hidden tasks keep their place
+and come back to it. The top visible task is the one the Live Update, the widget
+and TRMNL lead with. Stored as `tasks.position` (lower first; existing tasks
+took their creation order). Decided 2026-09-27.
+
+**Urgency** is one number per task, computed on read, never stored. A task below
+0 is hidden. Sketch, to be settled against real use:
 
 - one-off: undated sits at a fixed middle value; dated rises to 1 at the due
   date and keeps rising past it.
@@ -102,34 +114,33 @@ hidden. Sketch, to be settled against real use:
 **Notes.** Any task may carry free text (plain, multi-line, up to 4000
 characters, bare URLs made clickable). Notes belong to the task, not to a
 completion: they stay across interval and slot completions and are archived with
-a one-off. They are written in the web editor only (not the add form) and read
-in three places: the web row (a `≡` toggle, `o` on the keyboard), the widget (a
-`≡` marker with the text as its tooltip) and the Android list (tap a row to open
-a bottom sheet, read-only). They stay out of the Live Update and out of
-`/public/`, whose URL secret is a weaker credential than a session or token.
-Decided 2026-09-23.
+a one-off. They are written in the web editor and the Android editor and read in
+three places: the web row (a `≡` toggle, `o` on the keyboard), the widget (a `≡`
+marker with the text as its tooltip) and the Android task sheet (tap a row).
+They stay out of the Live Update and out of `/public/`, whose URL secret is a
+weaker credential than a session or token. Decided 2026-09-23.
 
 **Steps.** Any task may carry a routine: an ordered list of timed steps (yoga, a
 stretch set). A step has a title (shown), optional speech (spoken instead of the
 title), optional details (read, never spoken) and an exact duration in seconds.
 There are no ranges and no "per side": left and right are two steps. Steps
 belong to the task like notes: kept across completions, stored as JSON in
-`tasks.steps`, edited in the web editor only (rows with m:ss durations), shown
-under the web row's `≡` toggle, kept out of `/public/`. The Android app runs
-them: one step at a time, announced in English by the system text-to-speech
-("Frog. 1 minute 30 seconds."), a spoken "10 seconds" before a step of 20 s or
-more ends, then the next step. Pause, previous (restarts a step more than 3 s
-in, else steps back) and next; the screen stays on while it runs (no foreground
-service). Finishing never completes the task: the last screen offers "Mark
-done". Limits: 50 steps, title 200, speech 500, details 2000 characters, 1 s to
-6 h per step. Decided 2026-09-25.
+`tasks.steps`, edited in the web editor (rows with m:ss durations) and the
+Android routine editor, shown under the web row's `≡` toggle, kept out of
+`/public/`. The Android app runs them: one step at a time, announced in English
+by the system text-to-speech ("Frog. 1 minute 30 seconds."), a spoken "10
+seconds" before a step of 20 s or more ends, then the next step. Pause, previous
+(restarts a step more than 3 s in, else steps back) and next; the screen stays
+on while it runs (no foreground service). Finishing never completes the task:
+the last screen offers "Mark done". Limits: 50 steps, title 200, speech 500,
+details 2000 characters, 1 s to 6 h per step. Decided 2026-09-25.
 
 **Done history.** A "done" page in the web UI lists the latest completion of
 every interval and slot task and the 30 latest archived one-offs, newest first,
 grouped by day. Restore deletes that completion row; a one-off also returns to
 the list, and an interval task falls back to its previous completion (restore
-again to step further). Deleting a task still deletes its history. Web only.
-Decided 2026-09-23.
+again to step further). Deleting a task still deletes its history. On the web
+and Android's Done tab. Decided 2026-09-23.
 
 ### Stack
 
@@ -213,9 +224,12 @@ Decided 2026-09-23.
 
 1. **Plain Kotlin + Jetpack Compose (Material 3)**, no web view, no Capacitor.
    `me.malm.realmdo`, minSdk 31, target and compile SDK 36, AGP 8.13, Kotlin
-   2.2, Java 17. Dependencies are the Compose BOM, core-ktx, activity-compose
-   and lifecycle; HTTP is `HttpURLConnection` and JSON is `org.json`, so the
-   release APK stays small. No Room, no Retrofit, no WorkManager.
+   2.2, Java 17. Dependencies are the Compose BOM, core-ktx, activity-compose,
+   lifecycle and Reorderable (`sh.calvin.reorderable`, drag to reorder in lazy
+   lists); HTTP is `HttpURLConnection` (which on Android accepts PATCH) and JSON
+   is `org.json`, so the release APK stays small. No Room, no Retrofit, no
+   WorkManager, no navigation library: `App` in `MainActivity.kt` picks one
+   screen from state.
 2. **Auth** is a bearer token from the web UI's Settings, kept in app-private
    `SharedPreferences` and excluded from backup and device transfer. The app
    verifies it with `GET /api/me` before saving. Debug builds allow plain http
@@ -226,35 +240,58 @@ Decided 2026-09-23.
    from Play services (no camera permission, no camera UI), and a
    `realmdo://pair` intent filter so the phone's own camera app can open it.
    Pasting the token by hand still works.
-4. **Screens:** setup (URL + token), the ranked list (add one-off by title, done
-   per row, tap a row with notes or steps to open them in a bottom sheet
-   (`ModalBottomSheet`) with Start for steps and a small Done beside a wide
-   Close, a play button on rows with steps, refresh on resume), the routine
-   player (see "Steps") and settings (the Live Update switch, sign out). Tasks
-   below urgency 0 sit in a dimmed, collapsible "Later" section under the list,
-   so an upcoming slot or a not-yet-due interval can be ticked off early; a slot
-   task with every slot checked stays out. The Live Update still takes only the
-   visible list. Editing and the other kinds are web-only for now.
-5. **The Live Update.** One notification for the top-ranked task, static (no
-   countdown, no bar). Title is the task; the status-bar chip
-   (`shortCriticalText`) is the title cut to about twelve characters; the second
-   line is its standing ("due today", "every 6 d · done 3 d ago", the slot
-   states); the expanded view (BigTextStyle) adds the next three tasks; the
-   small icon says the kind (calendar, repeat, clock). Standard and BigText
-   styles qualify for promotion on Android 16: `setOngoing`,
-   `setRequestPromotedOngoing`, a content title, `POST_PROMOTED_NOTIFICATIONS`
-   in the manifest, channel above minimum importance. Promotion is requested
-   only while the top task is important, so the chip means "something is due";
-   otherwise, and below 16, it is a plain ongoing notification. Lessons from the
-   workout app (`../workout`, `RestNotificationPlugin`): a body `contentIntent`
-   suppresses the One UI chip, so "Open" is an action button; "Done" is a
-   broadcast to `TaskActionReceiver`, which posts the completion and re-posts
-   the next task without opening the app.
-6. **Refresh** is pull only: on app resume, after every mutation, from a
+4. **Design.** Drawn first as a canvas artifact (`realmdo Android`, ten phone
+   screens) and built to match. The mark's palette instead of dynamic colour:
+   lavender on warm cream, violet ink, clay for what is due; a violet-black dark
+   mode (`Theme.kt`). Line icons are paths in `Glyphs.kt`, not the extended icon
+   library. System font.
+5. **Screens.** Three tabs and full-screen editors:
+   - **Today:** the top task as a large "Up next" card (Done, Start for a
+     routine), the rest under "Then", tasks below urgency 0 in a folded "Later"
+     (tickable early; a slot task with every slot checked stays out), pull to
+     refresh, an Add button. Tap a task for its sheet: standing, notes, the
+     first steps, Start, and Edit and Done side by side (swipe or tap outside to
+     close, so no big button closes it).
+   - **Order:** every open task, hidden ones dimmed with when they return; drag
+     by the grip or long-press a row; letting go sends
+     `PUT
+     /api/tasks/order` with the whole list.
+   - **Done:** the history grouped by day, undo per row.
+   - **Task editor** (new and edit): title, kind as Once / Repeats / Daily
+     (fixed once it exists), due chips and a date picker, day steppers for
+     `after` and an optional "urgent after" (`ramp`, reset to default), slot
+     tiles with the user's times, notes, the routine row, delete with a
+     confirmation. Closing with changes asks first.
+   - **Routine editor:** one card per step with a grip to drag, the duration as
+     a pill, and the title, "say instead" and details inside when opened;
+     duplicate, "add right side" for a step that names left (and the reverse,
+     speech swapped too), delete with undo. Durations are set in a sheet: ±15 s,
+     presets from 0:15 to 5:00, exact minutes and seconds, "use for all". "Try
+     it" runs the unsaved steps in the player without a "Mark done". The steps
+     join the task only when it is saved.
+   - **Player** (see "Steps"): a ring counts the step down, a bar per step.
+   - **Settings:** the Live Update switch and background card, the account, sign
+     out. Time zone and slot times stay on the server's settings page.
+6. **The Live Update.** One notification for the top task, static (no countdown,
+   no bar). Title is the task; the status-bar chip (`shortCriticalText`) is the
+   title cut to about twelve characters; the second line is its standing ("due
+   today", "every 6 d · done 3 d ago", the slot states); the expanded view
+   (BigTextStyle) adds the next three tasks; the small icon says the kind
+   (calendar, repeat, clock). Standard and BigText styles qualify for promotion
+   on Android 16: `setOngoing`, `setRequestPromotedOngoing`, a content title,
+   `POST_PROMOTED_NOTIFICATIONS` in the manifest, channel above minimum
+   importance. Promotion is requested only while the top task is important, so
+   the chip means "something is due"; otherwise, and below 16, it is a plain
+   ongoing notification. Lessons from the workout app (`../workout`,
+   `RestNotificationPlugin`): a body `contentIntent` suppresses the One UI chip,
+   so "Open" is an action button; "Done" is a broadcast to `TaskActionReceiver`,
+   which posts the completion and re-posts the next task without opening the
+   app.
+7. **Refresh** is pull only: on app resume, after every mutation, from a
    15-minute inexact alarm (`setAndAllowWhileIdle`, rescheduled by each fire),
    and after boot. A failed fetch keeps the notification as it was. No push from
    the server; that would need a channel the backend does not have.
-7. **Background refresh on Samsung.** One UI's Freecess freezes a cached app and
+8. **Background refresh on Samsung.** One UI's Freecess freezes a cached app and
    holds its alarms until it next comes to the foreground; the ongoing
    notification does not exempt it. Measured on the S24 on 2026-09-19: the 22:39
    alarm was delivered at 08:01, the second the app was opened, with logcat
@@ -272,7 +309,7 @@ Decided 2026-09-23.
    page (`com.samsung.android.sm.ACTION_BATTERY`, shown only when it resolves
    without a permission; the Background usage limits page itself demands the
    system-only `READ_SEARCH_INDEXABLES`) and App info as the fallback.
-8. Root scripts `android:build` and `android:install` wrap `./gradlew`; CI runs
+9. Root scripts `android:build` and `android:install` wrap `./gradlew`; CI runs
    `testDebugUnitTest lintDebug assembleDebug` in its own job. JVM tests cover
    the pairing parser, the labels (durations and the spoken step included) and
    the task JSON; they pull the real `org.json` because android.jar only stubs
@@ -284,11 +321,13 @@ Decided 2026-09-23.
 GET    /api/me                   { username, via: "session" | "token" }
 GET    /api/settings             { timezone, slot_times: { morning, before_lunch, afternoon, evening } } (HH:MM)
 PUT    /api/settings             same body; validated (IANA zone, HH:MM, increasing)
-GET    /api/tasks                open tasks, sorted by urgency desc, with urgency + important
+GET    /api/tasks                open tasks in the user's order (position), with urgency + important
 POST   /api/tasks                { title, kind?: "once" | "interval" | "slot", due_on?, after_days?, ramp_days?, slots?, notes?, steps? } -> 201
                                  once: optional due_on; interval: after_days required, ramp_days optional;
                                  slot: slots required (subset of morning, before_lunch, afternoon, evening)
                                  every task view carries urgency, important, today (slot statuses) and pending_slot
+PUT    /api/tasks/order          { ids: [...] } first to last; open tasks of the caller only, no repeats,
+                                 at most 1000; left-out tasks keep their position; answers the list
 PATCH  /api/tasks/{id}           partial edit within the kind (kind cannot change);
                                  due_on: null clears, ramp_days: null returns to default,
                                  notes: null or blank clears (trimmed, at most 4000 chars);
@@ -419,7 +458,7 @@ Borrowed from the Realm repo unless noted.
 
 ## Open questions
 
-1. **Lists or one list.** The design so far is one ranked list per user. Tags
+1. **Lists or one list.** The design so far is one ordered list per user. Tags
    may be enough; decide when the UI is real.
 2. **Missed slots.** Does a missed before-lunch check roll into the evening, or
    just expire at end of day? Built as: expire (overdue until midnight, then

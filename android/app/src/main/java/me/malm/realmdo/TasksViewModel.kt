@@ -10,22 +10,43 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** The server's defaults, shown until the user's own times arrive. */
+private val DEFAULT_SLOT_TIMES = mapOf(
+    "morning" to "07:00",
+    "before_lunch" to "11:00",
+    "afternoon" to "14:00",
+    "evening" to "19:00",
+)
+
 data class UiState(
     val configured: Boolean = false,
     val username: String = "",
+    val baseUrl: String = "",
+    /** Every open task, in the user's order. */
     val tasks: List<Task> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
     val liveUpdate: Boolean = false,
     /** Whether refreshes reach the app in the background; taken on each resume. */
     val background: BackgroundRefresh.Status? = null,
+    /** Slot name to its start time, `HH:MM`, from the user's settings. */
+    val slotTimes: Map<String, String> = DEFAULT_SLOT_TIMES,
+    /** The done history, newest first; null until first loaded. */
+    val history: List<Completion>? = null,
+    /** A short confirmation for the snackbar, taken once by [TasksViewModel.snackShown]. */
+    val snack: String? = null,
 )
 
 /** Holds the list and runs every API call off the main thread. */
 class TasksViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
     private val _state = MutableStateFlow(
-        UiState(configured = prefs.configured, username = prefs.username, liveUpdate = prefs.liveUpdate),
+        UiState(
+            configured = prefs.configured,
+            username = prefs.username,
+            baseUrl = prefs.baseUrl,
+            liveUpdate = prefs.liveUpdate,
+        ),
     )
     val state: StateFlow<UiState> = _state
 
@@ -44,22 +65,96 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
             // Re-read who the token maps to; the server's answer can change.
             val name = withContext(Dispatchers.IO) { runCatching { api.me() }.getOrNull() }
             if (name != null && name != prefs.username) prefs.username = name
+            val times = withContext(Dispatchers.IO) { runCatching { api.slotTimes() }.getOrNull() }
             _state.update { s ->
                 result.fold(
-                    { s.copy(tasks = it, loading = false, error = null, username = name ?: s.username) },
+                    {
+                        s.copy(
+                            tasks = it,
+                            loading = false,
+                            error = null,
+                            username = name ?: s.username,
+                            slotTimes = times ?: s.slotTimes,
+                        )
+                    },
                     { s.copy(loading = false, error = it.message ?: "request failed") },
                 )
             }
             // The same list feeds the notification; no second fetch.
-            result.onSuccess { tasks ->
-                withContext(Dispatchers.IO) { TaskNotification.show(getApplication(), tasks) }
+            result.onSuccess { tasks -> notify(tasks) }
+        }
+    }
+
+    fun done(task: Task) = mutate({ it.done(task.id, task.pendingSlot) })
+
+    /** Creates or saves a task; [onDone] gets the error, or null once it is saved. */
+    fun save(draft: Draft, onDone: (String?) -> Unit) {
+        val api = Api.from(prefs) ?: return
+        viewModelScope.launch {
+            val body = draft.toJson()
+            val result = withContext(Dispatchers.IO) {
+                runCatching { if (draft.id == null) api.create(body) else api.update(draft.id, body) }
+            }
+            onDone(result.exceptionOrNull()?.let { it.message ?: "request failed" })
+            if (result.isSuccess) refresh()
+        }
+    }
+
+    fun delete(id: Long, title: String) = mutate({ it.delete(id) }, snack = "Deleted “$title”")
+
+    /**
+     * Puts the tasks in this order. The list moves at once; the server's
+     * answer then replaces it, or a refresh puts it back on failure.
+     */
+    fun order(ids: List<Long>) {
+        val api = Api.from(prefs) ?: return
+        val byId = _state.value.tasks.associateBy { it.id }
+        val moved = ids.mapNotNull(byId::get)
+        _state.update { it.copy(tasks = moved + it.tasks.filter { t -> t.id !in ids }) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { api.order(ids) } }
+            result.fold(
+                { tasks ->
+                    _state.update { it.copy(tasks = tasks, error = null) }
+                    notify(tasks)
+                },
+                { e ->
+                    _state.update { it.copy(error = e.message ?: "request failed") }
+                    refresh()
+                },
+            )
+        }
+    }
+
+    fun loadHistory() {
+        val api = Api.from(prefs) ?: return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { api.completions() } }
+            _state.update { s ->
+                result.fold(
+                    { s.copy(history = it, error = null) },
+                    { s.copy(error = it.message ?: "request failed") },
+                )
             }
         }
     }
 
-    fun add(title: String) = mutate { it.add(title) }
+    /** Undoes a completion, then reloads both the history and the list. */
+    fun restore(c: Completion) {
+        val api = Api.from(prefs) ?: return
+        _state.update { s -> s.copy(history = s.history?.filter { it.id != c.id }) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { api.restore(c.id) } }
+            result.fold(
+                { _state.update { it.copy(snack = "“${c.title}” is back in your list") } },
+                { e -> _state.update { it.copy(error = e.message ?: "request failed") } },
+            )
+            loadHistory()
+            refresh()
+        }
+    }
 
-    fun done(task: Task) = mutate { it.done(task.id, task.pendingSlot) }
+    fun snackShown() = _state.update { it.copy(snack = null) }
 
     /** Checks the connection, then stores it. */
     fun connect(baseUrl: String, token: String, onDone: (String?) -> Unit) {
@@ -71,7 +166,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                     prefs.baseUrl = baseUrl
                     prefs.token = token
                     prefs.username = name
-                    _state.update { it.copy(configured = true, username = name, error = null) }
+                    _state.update { it.copy(configured = true, username = name, baseUrl = prefs.baseUrl, error = null) }
                     onDone(null)
                     refresh()
                 },
@@ -93,11 +188,19 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { TaskNotification.show(getApplication(), tasks) }
     }
 
-    private fun mutate(call: (Api) -> Unit) {
+    private suspend fun notify(tasks: List<Task>) =
+        withContext(Dispatchers.IO) { TaskNotification.show(getApplication(), tasks) }
+
+    private fun mutate(call: (Api) -> Unit, snack: String? = null) {
         val api = Api.from(prefs) ?: return
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { call(api) } }
-            result.onFailure { e -> _state.update { it.copy(error = e.message ?: "request failed") } }
+            _state.update { s ->
+                result.fold(
+                    { s.copy(snack = snack ?: s.snack) },
+                    { e -> s.copy(error = e.message ?: "request failed") },
+                )
+            }
             refresh()
         }
     }

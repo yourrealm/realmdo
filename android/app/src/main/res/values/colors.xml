@@ -2,4 +2,6 @@
 <resources>
     <!-- The mark's lavender, deepened so it reads on a light shade. -->
     <color name="accent">#7B64E0</color>
+    <!-- The window behind Compose, so launch shows the app's cream, not grey. -->
+    <color name="window">#FBF7F0</color>
 </resources>

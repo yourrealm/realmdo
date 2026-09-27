@@ -83,6 +83,8 @@ pub struct Task {
     pub notes: Option<String>,
     /// A timed routine, run step by step on the phone; `None` when empty.
     pub steps: Option<Vec<Step>>,
+    /// Where the user put it: lower comes first.
+    pub position: i64,
     pub created_at: i64,
     /// One-off: set when completed (archived).
     pub done_at: Option<i64>,
@@ -179,6 +181,10 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE tasks ADD COLUMN notes TEXT;",
     // v7: timed steps on a task, as JSON like slots.
     "ALTER TABLE tasks ADD COLUMN steps TEXT;",
+    // v8: the user's own order. Lower comes first; existing tasks keep the
+    // order they were created in.
+    "ALTER TABLE tasks ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+    UPDATE tasks SET position = id;",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -409,7 +415,7 @@ const TASK_SELECT: &str =
         (SELECT MAX(c.completed_at) FROM completions c WHERE c.task_id = t.id),
         (SELECT GROUP_CONCAT(c.slot) FROM completions c
             WHERE c.task_id = t.id AND c.day = :day AND c.slot IS NOT NULL),
-        t.steps
+        t.steps, t.position
      FROM tasks t";
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
@@ -439,6 +445,7 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         slots,
         notes: r.get(9)?,
         steps,
+        position: r.get(13)?,
         created_at: r.get(7)?,
         done_at: r.get(8)?,
         last_done_at: r.get(10)?,
@@ -463,7 +470,7 @@ pub fn get_task(
 
 pub fn open_tasks(conn: &Connection, user_id: i64, day: &str) -> rusqlite::Result<Vec<Task>> {
     let mut stmt = conn.prepare(&format!(
-        "{TASK_SELECT} WHERE t.user_id = :user AND t.done_at IS NULL ORDER BY t.id"
+        "{TASK_SELECT} WHERE t.user_id = :user AND t.done_at IS NULL ORDER BY t.position, t.id"
     ))?;
     let rows = stmt.query_map(
         rusqlite::named_params! { ":user": user_id, ":day": day },
@@ -495,10 +502,14 @@ pub fn insert_task(
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
     let steps = new.steps.map(steps_json);
+    // New tasks go to the top of the user's order.
     let id: i64 = conn.query_row(
         "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, notes,
-            steps, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id",
+            steps, created_at, position)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+            (SELECT COALESCE(MIN(position), 1) - 1 FROM tasks
+             WHERE user_id = ?1 AND done_at IS NULL))
+         RETURNING id",
         params![
             user_id,
             new.title,
@@ -611,6 +622,24 @@ pub fn delete_task(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result
         params![id, user_id],
     )?;
     Ok(n > 0)
+}
+
+/// Puts the given open tasks in this order, first to last. Tasks left out
+/// keep their position. `false`, with nothing written, when an id is not one
+/// of the user's open tasks.
+pub fn reorder_tasks(conn: &Connection, user_id: i64, ids: &[i64]) -> rusqlite::Result<bool> {
+    let tx = conn.unchecked_transaction()?;
+    for (i, id) in ids.iter().enumerate() {
+        let n = tx.execute(
+            "UPDATE tasks SET position = ?3 WHERE id = ?1 AND user_id = ?2 AND done_at IS NULL",
+            params![id, user_id, i as i64],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+    }
+    tx.commit()?;
+    Ok(true)
 }
 
 /// The latest completion of every recurring task, plus the latest

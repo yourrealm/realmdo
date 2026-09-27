@@ -1,8 +1,9 @@
-// The viewer's ranked list on the home screen. Home stamps X-Realmdo-User on
-// every loader and action call (the app declares getTrustedHeaders), so the
-// container answers as the person looking at the tile. Eager: the request
-// needs no state, so the tile paints with data on first render. Rows are a
-// per-tile setting; "done" and "add" go straight to the API.
+// The viewer's list, in their own order, on the home screen. Home stamps
+// X-Realmdo-User on every loader and action call (the app declares
+// getTrustedHeaders), so the container answers as the person looking at the
+// tile. Eager: the request needs no state, so the tile paints with data on
+// first render. Rows are a per-tile setting; "done" and "add" go straight to
+// the API.
 
 import { r, z } from "@yourrealm/sdk";
 import {

@@ -20,6 +20,8 @@ data class RoutineState(
     val running: Boolean = true,
     /** Past the last step; the task is marked done by hand from here. */
     val finished: Boolean = false,
+    /** A try-out from the routine editor: nothing to mark done at the end. */
+    val preview: Boolean = false,
 ) {
     val step: Step get() = steps[index]
     val next: Step? get() = steps.getOrNull(index + 1)
@@ -52,6 +54,17 @@ class RoutineViewModel(app: Application) : AndroidViewModel(app) {
     fun start(task: Task) {
         val steps = task.steps ?: return
         _state.value = RoutineState(task, steps, leftMs = steps[0].seconds * 1000L)
+        begin(0)
+    }
+
+    /** Runs steps still being edited, under [title], without a task to complete. */
+    fun preview(title: String, steps: List<Step>) {
+        if (steps.isEmpty()) return
+        val task = Task(
+            id = -1, title = title, kind = "once", dueOn = null, afterDays = null, lastDoneAt = null,
+            urgency = 0.0, important = false, today = null, pendingSlot = null, notes = null, steps = steps,
+        )
+        _state.value = RoutineState(task, steps, leftMs = steps[0].seconds * 1000L, preview = true)
         begin(0)
     }
 

@@ -64,7 +64,7 @@ object TaskNotification {
     /** How many tasks after the top one the expanded view lists. */
     private const val NEXT_SHOWN = 3
 
-    /** [visible] is the ranked list, top first, hidden tasks already dropped. */
+    /** [visible] is the list in the user's order, top first, hidden tasks already dropped. */
     fun post(ctx: Context, visible: List<Task>) {
         ensureChannel(ctx)
         val task = visible.first()

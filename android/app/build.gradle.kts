@@ -49,6 +49,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
+    implementation(libs.reorderable)
     // QR pairing: Google's code scanner runs in Play services, so the app
     // needs no camera permission and no camera UI of its own.
     implementation(libs.play.services.code.scanner)

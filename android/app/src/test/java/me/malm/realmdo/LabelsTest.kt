@@ -56,6 +56,8 @@ class LabelsTest {
     fun slotDetailListsEachSlot() {
         val t = task("slot", today = listOf("before_lunch" to "done", "evening" to "upcoming"))
         assertEquals("before lunch ✓ · evening upcoming", detail(t, TODAY))
+        val now = task("slot", today = listOf("before_lunch" to "current"))
+        assertEquals("before lunch now", detail(now, TODAY))
     }
 
     @Test

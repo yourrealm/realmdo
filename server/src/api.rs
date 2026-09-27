@@ -21,7 +21,7 @@ use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use jiff::tz::TimeZone;
 use rusqlite::Connection;
@@ -44,6 +44,8 @@ const MAX_STEP_SECONDS: u32 = 6 * 3600;
 const MAX_DAYS: i64 = 3650;
 /// Archived one-offs on the history page.
 const RECENT_ONCE: i64 = 30;
+/// Ids in one reorder: far more open tasks than anyone keeps.
+const MAX_ORDER: usize = 1000;
 
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
@@ -99,6 +101,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/me", get(me))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/tasks", get(list_tasks).post(create_task))
+        .route("/api/tasks/order", put(order_tasks))
         .route("/api/tasks/{id}/done", post(done_task))
         .route("/api/tasks/{id}", delete(delete_task).patch(patch_task))
         .route("/api/completions", get(list_completions))
@@ -417,26 +420,50 @@ async fn put_settings(
 
 // ---- tasks ------------------------------------------------------------------
 
+/// Every open task in the user's order. Urgency decides what shows and what
+/// is important, never the order.
+async fn open_views(state: &AppState, user: db::User) -> Result<Vec<TaskView>, ApiError> {
+    let ctx = Ctx::new(state, user);
+    let user_id = ctx.user.id;
+    let day = ctx.local.day_key.clone();
+    let tasks = state.db(move |c| db::open_tasks(c, user_id, &day)).await?;
+    Ok(tasks.into_iter().map(|t| view(t, &ctx)).collect())
+}
+
 async fn list_tasks(
     State(state): State<AppState>,
     id: Identity,
 ) -> Result<Json<Vec<TaskView>>, ApiError> {
-    let ctx = Ctx::new(&state, id.user);
-    let user_id = ctx.user.id;
-    let day = ctx.local.day_key.clone();
-    let tasks = state.db(move |c| db::open_tasks(c, user_id, &day)).await?;
-    let mut views: Vec<TaskView> = tasks.into_iter().map(|t| view(t, &ctx)).collect();
-    sort_views(&mut views);
-    Ok(Json(views))
+    Ok(Json(open_views(&state, id.user).await?))
 }
 
-fn sort_views(views: &mut [TaskView]) {
-    views.sort_by(|a, b| {
-        b.urgency
-            .partial_cmp(&a.urgency)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.task.id.cmp(&b.task.id))
-    });
+#[derive(Deserialize)]
+struct Order {
+    ids: Vec<i64>,
+}
+
+/// Sets the user's order: `ids` first to last. Answers the list as it now is.
+async fn order_tasks(
+    State(state): State<AppState>,
+    id: Identity,
+    ApiJson(body): ApiJson<Order>,
+) -> Result<Json<Vec<TaskView>>, ApiError> {
+    if body.ids.len() > MAX_ORDER {
+        return Err(ApiError::BadRequest(format!("at most {MAX_ORDER} ids")));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if !body.ids.iter().all(|i| seen.insert(*i)) {
+        return Err(bad("ids must not repeat"));
+    }
+    let user_id = id.user.id;
+    let ids = body.ids;
+    if !state
+        .db(move |c| db::reorder_tasks(c, user_id, &ids))
+        .await?
+    {
+        return Err(bad("ids must name your open tasks"));
+    }
+    Ok(Json(open_views(&state, id.user).await?))
 }
 
 #[derive(Deserialize)]
@@ -916,7 +943,7 @@ async fn public_today(
     let user_id = ctx.user.id;
     let day = ctx.local.day_key.clone();
     let tasks = state.db(move |c| db::open_tasks(c, user_id, &day)).await?;
-    let mut views: Vec<TaskView> = tasks
+    let views: Vec<TaskView> = tasks
         .into_iter()
         .map(|t| {
             let t = db::Task {
@@ -928,7 +955,6 @@ async fn public_today(
         })
         .filter(|v| v.urgency >= 0.0)
         .collect();
-    sort_views(&mut views);
     Ok(Json(PublicToday {
         date: ctx.local.day_key.clone(),
         username: ctx.user.username.clone(),
@@ -1630,5 +1656,122 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    fn titles(body: &Value) -> Vec<&str> {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_list_is_the_users_order_and_new_tasks_go_on_top() {
+        let app = app();
+        let mut ids = Vec::new();
+        for title in ["a", "b", "c"] {
+            let (_, body) = create(&app, json!({ "title": title })).await;
+            ids.push(body["id"].as_i64().unwrap());
+        }
+        // Due today would outrank undated by urgency; the order ignores it.
+        create(&app, json!({ "title": "due", "due_on": "2026-08-30" })).await;
+        let (_, body) = call(&app, request(Method::GET, "/api/tasks", &[MAX], None)).await;
+        assert_eq!(titles(&body), vec!["due", "c", "b", "a"]);
+        assert_eq!(
+            body[0]["important"], true,
+            "still important, just not first by it"
+        );
+
+        let due = body[0]["id"].as_i64().unwrap();
+        let order = json!({ "ids": [ids[0], ids[2], ids[1], due] });
+        let (status, body) = call(
+            &app,
+            request(Method::PUT, "/api/tasks/order", &[MAX], Some(order)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(titles(&body), vec!["a", "c", "b", "due"]);
+
+        let (_, body) = create(&app, json!({ "title": "new" })).await;
+        let new_id = body["id"].as_i64().unwrap();
+        let (_, body) = call(&app, request(Method::GET, "/api/tasks", &[MAX], None)).await;
+        assert_eq!(titles(&body)[0], "new");
+
+        let all: Vec<i64> = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .map(|t| t["id"].as_i64().unwrap())
+            .collect();
+        let (_, body) = call(
+            &app,
+            request(
+                Method::PUT,
+                "/api/tasks/order",
+                &[MAX],
+                Some(json!({ "ids": all })),
+            ),
+        )
+        .await;
+        assert_eq!(titles(&body), vec!["due", "b", "c", "a", "new"]);
+        assert_eq!(body[4]["id"], new_id);
+    }
+
+    #[tokio::test]
+    async fn order_takes_only_the_users_open_tasks() {
+        let app = app();
+        let (_, body) = create(&app, json!({ "title": "mine" })).await;
+        let mine = body["id"].as_i64().unwrap();
+        let (_, body) = call(
+            &app,
+            request(
+                Method::POST,
+                "/api/tasks",
+                &[("X-Realmdo-User", "eve")],
+                Some(json!({ "title": "eve's" })),
+            ),
+        )
+        .await;
+        let eves = body["id"].as_i64().unwrap();
+        let (_, body) = create(&app, json!({ "title": "archived" })).await;
+        let archived = body["id"].as_i64().unwrap();
+        done(&app, archived, None).await;
+
+        for (ids, why) in [
+            (json!([mine, eves]), "another user's"),
+            (json!([mine, archived]), "archived"),
+            (json!([mine, mine]), "repeated"),
+            (json!([mine, 9999]), "unknown"),
+        ] {
+            let (status, body) = call(
+                &app,
+                request(
+                    Method::PUT,
+                    "/api/tasks/order",
+                    &[MAX],
+                    Some(json!({ "ids": ids })),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {body}");
+            assert!(body["error"].is_string());
+        }
+
+        // A device token may reorder: it is everyday use, not account admin.
+        let (_, secret) = mint(&app, MAX, "phone").await;
+        let bearer = format!("Bearer {secret}");
+        let (status, _) = call(
+            &app,
+            request(
+                Method::PUT,
+                "/api/tasks/order",
+                &[("Authorization", &bearer)],
+                Some(json!({ "ids": [mine] })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
     }
 }
