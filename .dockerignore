@@ -1,7 +1,4 @@
 # Only the container's inputs. realm.tsx, node_modules and build output stay out.
 *
 !server/
-!web/
 server/target/
-web/node_modules/
-web/dist/

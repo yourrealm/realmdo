@@ -14,7 +14,7 @@ class Prefs(context: Context) {
         get() = sp.getString("base_url", "") ?: ""
         set(v) = sp.edit { putString("base_url", v.trimEnd('/')) }
 
-    /** A `rdo_...` token minted under Settings in the web UI. */
+    /** A `rdo_...` token minted on the realmdo page in Home. */
     var token: String
         get() = sp.getString("token", "") ?: ""
         set(v) = sp.edit { putString("token", v.trim()) }

@@ -8,9 +8,6 @@
 // with round caps and a round join), so nothing loads a font.
 //
 // Writes:
-//   web/public/logo.svg, logo-dark.svg            the mark, 400x400 viewBox
-//   web/public/favicon.svg                        both, picked by prefers-color-scheme
-//   web/public/favicon.ico                        16/32/48 from the light mark
 //   android/.../mipmap-*/ic_launcher_{background,foreground}.png
 //                                                 the adaptive icon's two layers, per density
 //   android/.../drawable/ic_launcher_monochrome.xml, ic_stat_task.xml
@@ -18,10 +15,9 @@
 //   android/.../drawable-*/mark.png, drawable-night-*/mark.png
 //                                                 the mark at 28dp for the app's title bar, per density
 //
-// Needs `rsvg-convert` and `magick` on PATH (`brew install librsvg imagemagick`).
+// Needs `rsvg-convert` on PATH (`brew install librsvg`).
 
 const ROOT = new URL("../../", import.meta.url).pathname;
-const WEB_PUBLIC = `${ROOT}web/public/`;
 const ANDROID_RES = `${ROOT}android/app/src/main/res/`;
 
 // ---- colors -----------------------------------------------------------------
@@ -199,32 +195,14 @@ function mark(m: Mode, p = ""): Mark {
 const svgOpen = (viewBox: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" role="img" aria-label="realmdo">\n<title>realmdo</title>`;
 
-function logoSvg(m: Mark, desc: string): string {
-  return `${
-    svgOpen("0 0 400 400")
-  }\n<desc>${desc}</desc>\n<defs>${m.defs}</defs>\n<g>${m.tile}${m.check}</g>\n</svg>\n`;
-}
-
 // Cropped so the tile fills the frame, for icon sizes.
-const FAVICON_BOX = "32 32 336 336";
+const ICON_BOX = "32 32 336 336";
 
-// Both marks; the page's color scheme picks one.
-function faviconSvg(light: Mark, dark: Mark): string {
-  return `${svgOpen(FAVICON_BOX)}
-<style>.dark{display:none}@media (prefers-color-scheme:dark){.light{display:none}.dark{display:inline}}</style>
-<defs>${light.defs}${dark.defs}</defs>
-<g class="light">${light.tile}${light.check}</g>
-<g class="dark">${dark.tile}${dark.check}</g>
-</svg>
-`;
-}
-
-// One mark at the favicon crop: the .ico frames, which cannot follow the
-// color scheme, and the Android title-bar PNGs, where the resource qualifier
-// picks the twin.
-function icoSvg(m: Mark): string {
+// One mark at the icon crop, for the Android title-bar PNGs; the resource
+// qualifier picks the twin.
+function iconSvg(m: Mark): string {
   return `${
-    svgOpen(FAVICON_BOX)
+    svgOpen(ICON_BOX)
   }\n<defs>${m.defs}</defs>\n<g>${m.tile}${m.check}</g>\n</svg>\n`;
 }
 
@@ -303,13 +281,11 @@ const png = (svg: string, px: number, out: string) =>
   run("rsvg-convert", ["-w", `${px}`, "-h", `${px}`, "-o", out], svg);
 
 async function ensureTools(): Promise<void> {
-  for (const t of ["rsvg-convert", "magick"]) {
-    try {
-      await run(t, ["--version"]);
-    } catch {
-      console.error(`${t} is not on PATH: brew install librsvg imagemagick`);
-      Deno.exit(1);
-    }
+  try {
+    await run("rsvg-convert", ["--version"]);
+  } catch {
+    console.error("rsvg-convert is not on PATH: brew install librsvg");
+    Deno.exit(1);
   }
 }
 
@@ -323,54 +299,29 @@ const write = async (path: string, text: string) => {
   written.push(path.slice(ROOT.length));
 };
 
-await Deno.mkdir(WEB_PUBLIC, { recursive: true });
-await write(WEB_PUBLIC + "logo.svg", logoSvg(light, "The realmdo mark, light"));
-await write(
-  WEB_PUBLIC + "logo-dark.svg",
-  logoSvg(dark, "The realmdo mark, dark"),
-);
-await write(
-  WEB_PUBLIC + "favicon.svg",
-  faviconSvg(mark(LIGHT, "l"), mark(DARK, "d")),
-);
-
-const tmp = await Deno.makeTempDir({ prefix: "realmdo-logo-" });
-try {
-  const icoFrames: string[] = [];
-  for (const px of [16, 32, 48]) {
-    const f = `${tmp}/${px}.png`;
-    await png(icoSvg(light), px, f);
-    icoFrames.push(f);
+const floor = mix(LIGHT.tile, "#1a1030", 0.12);
+const background = layerSvg(light, light.tile, floor);
+const foreground = layerSvg(light, light.check);
+for (const [name, px] of Object.entries(DENSITIES)) {
+  const dir = `${ANDROID_RES}mipmap-${name}/`;
+  await Deno.mkdir(dir, { recursive: true });
+  await png(background, px, dir + "ic_launcher_background.png");
+  await png(foreground, px, dir + "ic_launcher_foreground.png");
+  written.push(
+    `android/.../mipmap-${name}/ic_launcher_{background,foreground}.png`,
+  );
+  // The title-bar mark, 28dp on the icon crop; the dark twin under night.
+  const markPx = Math.round(MARK_DP * (px / 108));
+  for (
+    const [qual, m] of [
+      [`drawable-${name}`, light],
+      [`drawable-night-${name}`, dark],
+    ] as const
+  ) {
+    await Deno.mkdir(ANDROID_RES + qual, { recursive: true });
+    await png(iconSvg(m), markPx, `${ANDROID_RES}${qual}/mark.png`);
   }
-  await run("magick", [...icoFrames, WEB_PUBLIC + "favicon.ico"]);
-  written.push("web/public/favicon.ico");
-
-  const floor = mix(LIGHT.tile, "#1a1030", 0.12);
-  const background = layerSvg(light, light.tile, floor);
-  const foreground = layerSvg(light, light.check);
-  for (const [name, px] of Object.entries(DENSITIES)) {
-    const dir = `${ANDROID_RES}mipmap-${name}/`;
-    await Deno.mkdir(dir, { recursive: true });
-    await png(background, px, dir + "ic_launcher_background.png");
-    await png(foreground, px, dir + "ic_launcher_foreground.png");
-    written.push(
-      `android/.../mipmap-${name}/ic_launcher_{background,foreground}.png`,
-    );
-    // The title-bar mark, 28dp on the favicon crop; the dark twin under night.
-    const markPx = Math.round(MARK_DP * (px / 108));
-    for (
-      const [qual, m] of [
-        [`drawable-${name}`, light],
-        [`drawable-night-${name}`, dark],
-      ] as const
-    ) {
-      await Deno.mkdir(ANDROID_RES + qual, { recursive: true });
-      await png(icoSvg(m), markPx, `${ANDROID_RES}${qual}/mark.png`);
-    }
-    written.push(`android/.../drawable{,-night}-${name}/mark.png`);
-  }
-} finally {
-  await Deno.remove(tmp, { recursive: true });
+  written.push(`android/.../drawable{,-night}-${name}/mark.png`);
 }
 
 // The check at the size it has when the tile fills the 72dp the mask shows.
@@ -382,7 +333,7 @@ await write(
     108,
     CHECK_DP,
     `The themed-icon layer: the launcher flattens it to alpha and tints it, so
-     this is the mark's check alone, the outline web/public/logo.svg carries,
+     this is the mark's check alone, the outline the tile carries,
      at the size it has on the tile (the tile fills the 72dp the mask shows).
      Generated by scripts/logo/gen.ts, like the mipmap PNGs, from the same
      path.`,

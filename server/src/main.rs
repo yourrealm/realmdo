@@ -1,4 +1,4 @@
-//! realmdo server: HTTP API + embedded web UI, one SQLite file.
+//! realmdo server: the JSON API over one SQLite file.
 //!
 //! `realmdo` serves; `realmdo healthcheck` probes a running server and exits
 //! 0/1 (the container has no shell or curl, so the binary checks itself).
@@ -11,7 +11,6 @@ mod healthcheck;
 mod slots;
 mod token;
 mod urgency;
-mod web;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -50,7 +49,7 @@ async fn serve() {
     let conn =
         db::open(&db_path).unwrap_or_else(|e| panic!("open database {}: {e}", db_path.display()));
 
-    let app = api::router(api::AppState::new(conn)).fallback(web::serve);
+    let app = api::router(api::AppState::new(conn));
     let addr = SocketAddr::from(([0, 0, 0, 0], port()));
     let listener = tokio::net::TcpListener::bind(addr)
         .await

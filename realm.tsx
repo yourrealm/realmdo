@@ -1,4 +1,4 @@
-// realmdo: a per-user todo app. One container: Rust API + embedded web UI.
+// realmdo: a per-user todo app. One container: the Rust JSON API.
 //
 // Identity. The gate injects X-Realmdo-User on every request that carries a
 // Home session, and strips any copy the client sent. The backend trusts that
@@ -43,6 +43,8 @@ export default createApp({
         image: "benjick/realmdo:latest",
         router: {
           containerPort: 3000,
+          // No tile: people use the realmdo page, the widget and the phone.
+          tile: false,
           // Tighter than the 1000/10s default: the bearer-token check on /api/
           // is the exposed surface, and a human on the UI never gets near this.
           rateLimit: { requests: 120, window: "10s" },

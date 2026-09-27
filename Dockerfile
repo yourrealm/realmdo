@@ -1,6 +1,6 @@
-# realmdo image: one binary (Rust API + embedded web UI) on distroless.
+# realmdo image: one binary (the Rust JSON API) on distroless.
 #
-# Build context is the repo root; .dockerignore narrows it to web/ and server/.
+# Build context is the repo root; .dockerignore narrows it to server/.
 # Nothing from ../holden enters this image: realm.tsx describes the deployment
 # and never runs in the container.
 #
@@ -9,15 +9,6 @@
 # them running under QEMU (the Realm updater's recipe). Unlike the updater,
 # rusqlite's bundled sqlite3.c needs a C cross-compiler, hence Debian's
 # gcc-*-linux-gnu packages, glibc targets, and a glibc runtime (distroless/cc).
-
-# --- web: static UI -----------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:24-alpine AS web
-RUN corepack enable && corepack prepare pnpm@10.13.1 --activate
-WORKDIR /web
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-COPY web/ ./
-RUN pnpm build
 
 # --- server: cross-compiled binary --------------------------------------------
 FROM --platform=$BUILDPLATFORM rust:1.96-bookworm AS server
@@ -46,8 +37,6 @@ RUN set -eux; \
     fi
 WORKDIR /app
 COPY server/ ./server/
-# rust-embed reads ../web/dist relative to the crate at compile time.
-COPY --from=web /web/dist ./web/dist
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/server/target \
     set -eux; . /cross.env; \

@@ -244,7 +244,7 @@ fun SetupScreen(vm: TasksViewModel, state: UiState) {
             Spacer(Modifier.height(24.dp))
             ScreenTitle("Pair this phone", null)
             Text(
-                "Create a token in realmdo's settings on your Realm, then scan its code or paste it here.",
+                "Create a token on the realmdo page in your Realm's Home, then scan its code or paste it here.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

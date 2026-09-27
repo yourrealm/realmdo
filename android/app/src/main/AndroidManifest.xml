@@ -45,7 +45,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- The pairing QR from the web UI's Settings, so the phone's own
+            <!-- The pairing QR from the realmdo page in Home, so the phone's own
                  camera app can pair too: realmdo://pair?url=...&token=... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

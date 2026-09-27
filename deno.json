@@ -18,7 +18,6 @@
     "verbatimModuleSyntax": true
   },
   "exclude": [
-    "web",
     "server",
     "android",
     "dist",

@@ -1,7 +1,7 @@
 name: CI
 
-# Three independent parts. `container` needs only this repo: the web UI, the
-# Rust server, and the image. `realm` checks realm.tsx with the Realm SDK from
+# Three independent parts. `container` needs only this repo: the Rust server
+# and the image. `realm` checks realm.tsx with the Realm SDK from
 # npm (@yourrealm/sdk). `android` builds the thin client under android/ against
 # the JSON API and needs nothing else.
 
@@ -18,31 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10.13.1
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
-
-      - name: Web
-        working-directory: web
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm typecheck
-          pnpm fmt:check
-          pnpm build
 
       - name: Server
         working-directory: server

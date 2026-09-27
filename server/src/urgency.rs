@@ -54,7 +54,7 @@ pub fn slot_state(slot: Slot, times: &SlotTimes, minute: u16, checked: bool) -> 
 
 const SLOT_OVERDUE: f64 = 1.5;
 const SLOT_CURRENT: f64 = 1.0;
-/// Hidden from ranked lists; the web UI's today strip shows it anyway.
+/// Hidden from ranked lists.
 const SLOT_UPCOMING: f64 = -0.5;
 /// Everything checked (or nothing left today): hidden.
 const SLOT_DONE: f64 = -1.0;

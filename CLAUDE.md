@@ -5,33 +5,36 @@ Guidance for Claude Code working in this repository.
 ## What this is
 
 **realmdo** - a todo app for Realm. It is a Realm app: one `realm.tsx`
-describing the deployment, one Docker image (Rust backend + embedded React web
-UI), and home-screen widgets. Realm itself lives at `../holden`
+describing the deployment, one Docker image (a Rust JSON API), a Home page and
+widget, and an Android app. Realm itself lives at `../holden`
 (`/Users/max/dev/holden`). Read that repo's `CLAUDE.md` before touching anything
 here; this file only records what is specific to realmdo.
 
 Status (2026-09-17): layout and toolchains stand and are verified end to end
-(SDK link, Rust server, web UI, both image arches, container smoke test). All
-three task kinds are built, per user, with urgency computed on read in the
-user's time zone and a completion history. Per-user settings hold the time zone
-and slot start times. Bearer tokens are done (minted under Settings, hashed,
-session-only management). One widget exists (`widgets/tasks.tsx`: ranked list,
-done, add). Tasks are editable (PATCH, inline in the web UI, kind fixed) and
-carry optional free-text notes. `/public/{secret}/today` serves TRMNL, which
-polls it. The Android client (`android/`) is started: token sign-in, ranked
-list, add, done, and the top task pinned as an Android 16 Live Update. Verified
-on a Galaxy S24 (Android 16) on 2026-09-18. Tasks may carry timed steps, run
-aloud by the Android app, and Android lists hidden tasks under "Later"; both
-verified on the S24 on 2026-09-25. On 2026-09-27 the list became the user's own
-order (dragged on Android) and Android learned everything the web UI did except
-settings, tokens and the public URL, in a new design (see "Android, as built");
-unit-tested; Today and Order seen on the S24 the same day, the editors not yet
-exercised there. The same day a Realm page (`pages/settings.tsx`) took over
-tokens with the pairing QR, the public URL and settings, on SDK
-`alpha.1389.2e2862b1` (`QrCode` and the `services` map). It cannot be tried
-under `realm-sdk dev` on macOS (see Commands); it was seen working on the live
-Realm on 2026-09-28, applied through Home's Replace source. The web UI can go.
-The decisions below are the spec. When one changes, change it here.
+(SDK link, Rust server, the since-removed web UI, both image arches, container
+smoke test). All three task kinds are built, per user, with urgency computed on
+read in the user's time zone and a completion history. Per-user settings hold
+the time zone and slot start times. Bearer tokens are done (minted under
+Settings, hashed, session-only management). One widget exists
+(`widgets/tasks.tsx`: ranked list, done, add). Tasks are editable (PATCH, inline
+in the web UI, kind fixed) and carry optional free-text notes.
+`/public/{secret}/today` serves TRMNL, which polls it. The Android client
+(`android/`) is started: token sign-in, ranked list, add, done, and the top task
+pinned as an Android 16 Live Update. Verified on a Galaxy S24 (Android 16) on
+2026-09-18. Tasks may carry timed steps, run aloud by the Android app, and
+Android lists hidden tasks under "Later"; both verified on the S24 on
+2026-09-25. On 2026-09-27 the list became the user's own order (dragged on
+Android) and Android learned everything the web UI did except settings, tokens
+and the public URL, in a new design (see "Android, as built"); unit-tested;
+Today and Order seen on the S24 the same day, the editors not yet exercised
+there. The same day a Realm page (`pages/settings.tsx`) took over tokens with
+the pairing QR, the public URL and settings, on SDK `alpha.1389.2e2862b1`
+(`QrCode` and the `services` map). It cannot be tried under `realm-sdk dev` on
+macOS (see Commands); it was seen working on the live Realm on 2026-09-28,
+applied through Home's Replace source, and the React web UI (`web/`) went the
+same day: the page, the widget and Android cover all it did. The app has no Home
+tile (`router.tile: false`). The decisions below are the spec. When one changes,
+change it here.
 
 ## Where to look in the Realm repo
 
@@ -116,45 +119,43 @@ took their creation order). Decided 2026-09-27.
 **Notes.** Any task may carry free text (plain, multi-line, up to 4000
 characters, bare URLs made clickable). Notes belong to the task, not to a
 completion: they stay across interval and slot completions and are archived with
-a one-off. They are written in the web editor and the Android editor and read in
-three places: the web row (a `≡` toggle, `o` on the keyboard), the widget (a `≡`
-marker with the text as its tooltip) and the Android task sheet (tap a row).
-They stay out of the Live Update and out of `/public/`, whose URL secret is a
-weaker credential than a session or token. Decided 2026-09-23.
+a one-off. They are written in the Android editor and read in two places: the
+widget (a `≡` marker with the text as its tooltip) and the Android task sheet
+(tap a row). They stay out of the Live Update and out of `/public/`, whose URL
+secret is a weaker credential than a session or token. Decided 2026-09-23.
 
 **Steps.** Any task may carry a routine: an ordered list of timed steps (yoga, a
 stretch set). A step has a title (shown), optional speech (spoken instead of the
 title), optional details (read, never spoken) and an exact duration in seconds.
 There are no ranges and no "per side": left and right are two steps. Steps
 belong to the task like notes: kept across completions, stored as JSON in
-`tasks.steps`, edited in the web editor (rows with m:ss durations) and the
-Android routine editor, shown under the web row's `≡` toggle, kept out of
-`/public/`. The Android app runs them: one step at a time, announced in English
-by the system text-to-speech ("Frog. 1 minute 30 seconds."), a spoken "10
-seconds" before a step of 20 s or more ends, then the next step. Pause, previous
-(restarts a step more than 3 s in, else steps back) and next; the screen stays
-on while it runs (no foreground service). Finishing never completes the task:
-the last screen offers "Mark done". Limits: 50 steps, title 200, speech 500,
-details 2000 characters, 1 s to 6 h per step. Decided 2026-09-25.
+`tasks.steps`, edited in the Android routine editor, kept out of `/public/`. The
+Android app runs them: one step at a time, announced in English by the system
+text-to-speech ("Frog. 1 minute 30 seconds."), a spoken "10 seconds" before a
+step of 20 s or more ends, then the next step. Pause, previous (restarts a step
+more than 3 s in, else steps back) and next; the screen stays on while it runs
+(no foreground service). Finishing never completes the task: the last screen
+offers "Mark done". Limits: 50 steps, title 200, speech 500, details 2000
+characters, 1 s to 6 h per step. Decided 2026-09-25.
 
-**Done history.** A "done" page in the web UI lists the latest completion of
-every interval and slot task and the 30 latest archived one-offs, newest first,
+**Done history.** Android's Done tab lists the latest completion of every
+interval and slot task and the 30 latest archived one-offs, newest first,
 grouped by day. Restore deletes that completion row; a one-off also returns to
 the list, and an interval task falls back to its previous completion (restore
-again to step further). Deleting a task still deletes its history. On the web
-and Android's Done tab. Decided 2026-09-23.
+again to step further). Deleting a task still deletes its history. Decided
+2026-09-23.
 
 ### Stack
 
-1. **Backend: Rust.** One binary, SQLite (bundled rusqlite), embeds the web UI.
-   Target under 10 MiB idle (measured: 2.2 MB binary, 2.4 MiB idle RSS). Chosen
-   over Go for consistency with the Realm repo's existing Rust crate and gate
-   (`cargo clippy -D warnings`, `cargo fmt --check`, `cargo test`). A Deno
-   container idles near 90 MiB; this app idles forever on the box, so the
-   footprint matters.
-2. **Web UI: React + Vite**, compiled to static files embedded in the binary.
-   Served at the app's gated subdomain, which is where the brokered identity
-   arrives. Keyboard-first, small.
+1. **Backend: Rust.** One binary, SQLite (bundled rusqlite), JSON only: any path
+   outside the API is a JSON 404. Target under 10 MiB idle (measured: 2.2 MB
+   binary, 2.4 MiB idle RSS). Chosen over Go for consistency with the Realm
+   repo's existing Rust crate and gate (`cargo clippy -D warnings`,
+   `cargo fmt --check`, `cargo test`). A Deno container idles near 90 MiB; this
+   app idles forever on the box, so the footprint matters.
+2. **No web UI.** A React + Vite UI was embedded in the binary until 2026-09-28;
+   the page below, the widget and Android replaced it. The router sets
+   `tile: false`, since a Home tile would open a bare API.
 3. **Widgets and pages:** `widgets/*.tsx` and `pages/*.tsx` on the Realm UI
    surface, stitched by `realm-sdk build`. The one page (`pages/settings.tsx`)
    is listed in Home's sidebar as "realmdo" with a check icon, since a
@@ -218,8 +219,7 @@ and Android's Done tab. Decided 2026-09-23.
    commit cannot host this app. Home's widget-loader proxy reaches the container
    directly and stamps the same brokered headers there, next to
    `X-Realm-Widget-PID`, so widgets and pages arrive as their viewer.
-   `realm-sdk dev` stamps a synthetic viewer `dev` (admin), the same name the
-   Vite proxy uses.
+   `realm-sdk dev` stamps a synthetic viewer `dev` (admin).
 2. The `/public/` URL secret (`pub_` prefix) works like a token: hashed at rest,
    shown once, one per user, regenerate rotates it, delete disables. It grants
    exactly one thing: `GET /public/{secret}/today`, the visible list, nothing
@@ -240,16 +240,16 @@ and Android's Done tab. Decided 2026-09-23.
    is `org.json`, so the release APK stays small. No Room, no Retrofit, no
    WorkManager, no navigation library: `App` in `MainActivity.kt` picks one
    screen from state.
-2. **Auth** is a bearer token from the web UI's Settings, kept in app-private
+2. **Auth** is a bearer token from the realmdo page in Home, kept in app-private
    `SharedPreferences` and excluded from backup and device transfer. The app
    verifies it with `GET /api/me` before saving. Debug builds allow plain http
    (a dev server at `10.0.2.2:3000`); release is https only.
-3. **Pairing by QR.** Minting a token on the Settings page (and, until it goes,
-   the web UI) also renders it as a QR code holding
-   `realmdo://pair?url=<origin>&token=<secret>`. The app reads it two ways: a
-   "Scan QR code" button using Google's code scanner from Play services (no
-   camera permission, no camera UI), and a `realmdo://pair` intent filter so the
-   phone's own camera app can open it. Pasting the token by hand still works.
+3. **Pairing by QR.** Minting a token on the realmdo page also renders it as a
+   QR code holding `realmdo://pair?url=<origin>&token=<secret>`. The app reads
+   it two ways: a "Scan QR code" button using Google's code scanner from Play
+   services (no camera permission, no camera UI), and a `realmdo://pair` intent
+   filter so the phone's own camera app can open it. Pasting the token by hand
+   still works.
 4. **Design.** Drawn first as a canvas artifact (`realmdo Android`, ten phone
    screens) and built to match. The mark's palette instead of dynamic colour:
    lavender on warm cream, violet ink, clay for what is due; a violet-black dark
@@ -363,44 +363,38 @@ body is a 400 in that shape too, not axum's plain-text 422.
 
 ### Layout
 
-One repo, three independent toolchains, nothing shared between them. Not a pnpm
-workspace, no turbo: `web/` never imports the SDK, and the image must build
-without the SDK.
+One repo, independent toolchains, nothing shared between them: the image must
+build without the SDK.
 
 ```
 realm.tsx          deployment: services, getTrustedHeaders, gate, info   } Deno project at the root
 realm.test.ts      compile-tier tests (realm-sdk test)                   } package.json links the SDK
-widgets/           home-screen widgets, one file each                    } deno.json excludes web/ server/
-package.json       root scripts fan out to all three toolchains
-server/            Rust crate: HTTP API, SQLite, urgency, embeds ../web/dist
-web/               React + Vite UI, its own package.json and lockfile
+widgets/ pages/    the Home widget and page, one file each               } deno.json excludes server/
+package.json       root scripts fan out to every toolchain
+server/            Rust crate: HTTP API, SQLite, urgency
 android/           Kotlin + Compose client, its own Gradle wrapper
-Dockerfile         context = repo root; .dockerignore keeps only server/ and web/
+Dockerfile         context = repo root; .dockerignore keeps only server/
 .github/workflows/ci.yml
 ```
 
-`android/` is the fourth toolchain: a Gradle project, plain Kotlin and Compose,
-against the JSON API. It has no ties to the other three, and `.dockerignore`
-keeps it out of the image.
+`android/` is a Gradle project, plain Kotlin and Compose, against the JSON API.
+It has no ties to the others, and `.dockerignore` keeps it out of the image.
 
 Why `realm.tsx` sits at the root: every Realm app has that shape, and
-`realm-sdk` commands run from the directory that holds it. Why `web/` has its
-own lockfile: a workspace would pull the root `package.json`, and with it the
-SDK and everything it drags in, into the Docker build for nothing.
+`realm-sdk` commands run from the directory that holds it.
 
 ### Commands
 
 From the root (`pnpm <script>`):
 
 ```
-typecheck     deno check; tsc in web/; vite build; cargo clippy -D warnings
-test          realm-sdk test; vite build; cargo test
-fmt / fmt:check   deno fmt (root and web/, markdown included); cargo fmt
+typecheck     deno check; cargo clippy -D warnings
+test          realm-sdk test; cargo test
+fmt / fmt:check   deno fmt (markdown included); cargo fmt
 validate      realm-sdk validate realm.tsx
 build:pack    realm-sdk build --out dist/realmdo.realmpack (pnpm's own `pack` shadows a script of that name)
-dev:server    build web/, then cargo run with REALMDO_DATA_DIR=./server/data on :3000
-dev:web       vite on :5173, proxies /api to :3000 and injects X-Realmdo-User: dev
-              REALMDO_PORT=3100 moves the server port for both, when :3000 is taken
+dev:server    cargo run with REALMDO_DATA_DIR=./server/data on :3000
+              (REALMDO_PORT=3100 moves it when :3000 is taken)
 build:image   docker buildx build, both arches, benjick/realmdo:latest
 android:build unit tests + lintDebug + assembleDebug in android/
 android:install installDebug onto the connected device (adb)
@@ -409,11 +403,10 @@ logo          regenerate every rendition of the mark from scripts/logo/gen.ts
 
 The mark is Realm's (`../holden/scripts/logo/gen.ts`) with a checkmark in place
 of the R: same tile, same palette, same clay filter, the check drawn as a filled
-outline so no font is involved. `pnpm logo` writes `web/public/` (`logo.svg`,
-`logo-dark.svg`, `favicon.svg`, `favicon.ico`) and the Android adaptive icon
-(PNG layers per density, the check as the monochrome vector). Edit the script,
-never an output. It needs `rsvg-convert` and `magick`
-(`brew install librsvg imagemagick`).
+outline so no font is involved. `pnpm logo` writes the Android adaptive icon
+(PNG layers per density, the check as the monochrome vector) and the title-bar
+mark. Edit the script, never an output. It needs `rsvg-convert`
+(`brew install librsvg`).
 
 `realm-sdk dev` shells out to an `esbuild` binary the SDK does not bring, so the
 root `package.json` pins the same `esbuild` holden's root does. It also needs
@@ -422,10 +415,6 @@ it `benjick/realmdo:latest`. On macOS its loaders and actions never answer: the
 dev server dials the container's bridge IP (the worker's `ui-proxy`), which
 Docker Desktop keeps inside its VM. Found 2026-09-27; the surfaces load, their
 calls time out.
-
-`cargo` needs `web/dist` to exist: `rust-embed` reads `../web/dist` at compile
-time (in debug builds it reads from disk at run time, so a rebuilt UI shows
-without recompiling). The scripts above build web first; do the same by hand.
 
 Server env: `PORT` (3000), `REALMDO_DATA_DIR` (`/data`). The identity header is
 `X-Realmdo-User`, written twice on purpose: `getTrustedHeaders` in `realm.tsx`
@@ -444,9 +433,8 @@ and `USER_HEADER` in `server/src/api.rs`.
    the SDK's own `@std/*` dependencies.
 3. `deno.json`: `nodeModulesDir: "manual"`, the `compilerOptions` from
    `../holden/deno.json`, and
-   `exclude: ["web", "server", "dist",
-   "realm-bundle.tsx"]` so `deno check`
-   never sees React or Rust.
+   `exclude: ["server", "android", "dist", "realm-bundle.tsx"]` so `deno check`
+   never sees Rust.
 4. The test harness's compile result carries services and trusted headers but
    not the gate flag; assert `hasAnonymousGate` off `app.evaluate({ config })`
    instead (see `realm.test.ts`).
@@ -458,9 +446,9 @@ only this repo; the `realm` job is a plain `pnpm install` and the four checks.
 
 Borrowed from the Realm repo unless noted.
 
-1. Deno for `realm.tsx`, `widgets/`, and their tests: `deno check`,
+1. Deno for `realm.tsx`, `widgets/`, `pages/` and their tests: `deno check`,
    `realm-sdk test`, `realm-sdk validate`, `realm-sdk build`, `realm-sdk dev`.
-   Cargo for `server/`, pnpm + Vite for `web/`.
+   Cargo for `server/`, Gradle for `android/`.
 2. Relative imports carry `.ts`/`.tsx` extensions. No `npm:` or `jsr:` prefixes
    in import statements; dependencies live in `package.json`.
 3. Short code comments. No backwards-compat shims. No dynamic imports. Don't

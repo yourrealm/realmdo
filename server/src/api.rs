@@ -115,6 +115,7 @@ pub fn router(state: AppState) -> Router {
         .route("/public/{secret}/today", get(public_today))
         .route("/api/tokens", get(list_tokens).post(create_token))
         .route("/api/tokens/{id}", delete(delete_token))
+        .fallback(|| async { ApiError::NotFound })
         .with_state(state)
 }
 
@@ -1460,6 +1461,16 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn unknown_paths_are_a_json_404() {
+        let app = app();
+        for path in ["/", "/index.html", "/api/nope"] {
+            let (status, body) = call(&app, request(Method::GET, path, &[MAX], None)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(body, json!({ "error": "not found" }), "{path}");
+        }
     }
 
     #[tokio::test]
