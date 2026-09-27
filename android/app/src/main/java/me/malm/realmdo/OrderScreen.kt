@@ -91,6 +91,7 @@ fun OrderScreen(vm: TasksViewModel, state: UiState, padding: PaddingValues) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = LocalExtra.current.card,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
                     shadowElevation = lift,
                     modifier = Modifier.fillMaxWidth().longPressDraggableHandle(
                         onDragStarted = {

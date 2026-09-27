@@ -240,7 +240,7 @@ private fun AllClear(later: Int, onShowLater: () -> Unit) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(26.dp),
-            colors = CardDefaults.cardColors(containerColor = LocalExtra.current.card),
+            colors = CardDefaults.cardColors(containerColor = LocalExtra.current.card, contentColor = MaterialTheme.colorScheme.onSurface),
         ) {
             Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Glyph.Check, null, Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)

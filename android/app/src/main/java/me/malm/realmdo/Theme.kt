@@ -1,6 +1,7 @@
 package me.malm.realmdo
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -91,7 +92,12 @@ val LocalExtra = staticCompositionLocalOf { Extra(card = Color.White) }
 @Composable
 fun RealmdoTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
+    val scheme = if (dark) Dark else Light
     CompositionLocalProvider(LocalExtra provides Extra(card = if (dark) Color(0xFF1F1A29) else Color.White)) {
-        MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
+        MaterialTheme(colorScheme = scheme) {
+            // Material's own default is black: any surface in a colour
+            // outside the scheme (the card) would inherit it.
+            CompositionLocalProvider(LocalContentColor provides scheme.onSurface, content = content)
+        }
     }
 }

@@ -298,6 +298,7 @@ private fun StepCard(
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = LocalExtra.current.card,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shadowElevation = lift,
         border = if (open) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
         modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -423,7 +424,12 @@ private fun DurationSheet(
         apply(total)
         scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = LocalExtra.current.card) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = LocalExtra.current.card,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
         Column(
             Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 28.dp).imePadding(),
             verticalArrangement = Arrangement.spacedBy(20.dp),

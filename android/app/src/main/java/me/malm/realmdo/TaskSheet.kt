@@ -50,7 +50,12 @@ fun TaskSheet(task: Task, onDone: () -> Unit, onStart: () -> Unit, onEdit: () ->
             then()
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = LocalExtra.current.card) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = LocalExtra.current.card,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
                 .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),

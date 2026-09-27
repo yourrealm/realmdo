@@ -100,6 +100,7 @@ fun EditorScreen(
     BackHandler(onBack = tryClose)
     androidx.compose.material3.Scaffold(
         containerColor = LocalExtra.current.card,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalExtra.current.card),

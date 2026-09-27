@@ -162,6 +162,7 @@ fun GroupRow(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = groupShape(index, count),
         color = LocalExtra.current.card,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Column {
             if (index > 0) HorizontalDivider(Modifier.padding(start = 52.dp), color = MaterialTheme.colorScheme.outlineVariant)

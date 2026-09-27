@@ -64,6 +64,7 @@ private fun Group(label: String, content: @Composable ColumnScope.() -> Unit) {
         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(20.dp),
         color = LocalExtra.current.card,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp), content = content)
     }
