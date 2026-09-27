@@ -160,11 +160,10 @@ class Api(private val baseUrl: String, private val token: String) {
         raw("DELETE", "/api/completions/$completionId", null)
     }
 
-    /** Slot name to its start time, `HH:MM`. */
-    fun slotTimes(): Map<String, String> {
-        val times = request("GET", "/api/settings").getJSONObject("slot_times")
-        return times.keys().asSequence().associateWith { times.getString(it) }
-    }
+    fun settings(): DaySettings = DaySettings.from(request("GET", "/api/settings"))
+
+    /** Saves the whole of it; the server validates the zone and the order again. */
+    fun saveSettings(s: DaySettings): DaySettings = DaySettings.from(request("PUT", "/api/settings", s.toJson()))
 
     private fun taskList(arr: JSONArray): List<Task> = (0 until arr.length()).map { Task.from(arr.getJSONObject(it)) }
 

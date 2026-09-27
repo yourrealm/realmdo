@@ -31,6 +31,8 @@ data class UiState(
     val background: BackgroundRefresh.Status? = null,
     /** Slot name to its start time, `HH:MM`, from the user's settings. */
     val slotTimes: Map<String, String> = DEFAULT_SLOT_TIMES,
+    /** The user's IANA time zone; null until the settings arrive. */
+    val timezone: String? = null,
     /** The done history, newest first; null until first loaded. */
     val history: List<Completion>? = null,
     /** A short confirmation for the snackbar, taken once by [TasksViewModel.snackShown]. */
@@ -65,7 +67,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
             // Re-read who the token maps to; the server's answer can change.
             val name = withContext(Dispatchers.IO) { runCatching { api.me() }.getOrNull() }
             if (name != null && name != prefs.username) prefs.username = name
-            val times = withContext(Dispatchers.IO) { runCatching { api.slotTimes() }.getOrNull() }
+            val day = withContext(Dispatchers.IO) { runCatching { api.settings() }.getOrNull() }
             _state.update { s ->
                 result.fold(
                     {
@@ -74,7 +76,8 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                             loading = false,
                             error = null,
                             username = name ?: s.username,
-                            slotTimes = times ?: s.slotTimes,
+                            slotTimes = day?.slotTimes ?: s.slotTimes,
+                            timezone = day?.timezone ?: s.timezone,
                         )
                     },
                     { s.copy(loading = false, error = it.message ?: "request failed") },
@@ -151,6 +154,25 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
             )
             loadHistory()
             refresh()
+        }
+    }
+
+    /**
+     * Saves the time zone and slot times, then refreshes: they move every
+     * task's standing. [onDone] gets the error, or null once saved.
+     */
+    fun saveDay(day: DaySettings, onDone: (String?) -> Unit) {
+        val api = Api.from(prefs) ?: return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { api.saveSettings(day) } }
+            result.fold(
+                { saved ->
+                    _state.update { it.copy(slotTimes = saved.slotTimes, timezone = saved.timezone) }
+                    onDone(null)
+                    refresh()
+                },
+                { onDone(it.message ?: "request failed") },
+            )
         }
     }
 

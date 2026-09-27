@@ -2,9 +2,11 @@ package me.malm.realmdo
 
 import android.Manifest
 import android.os.Build
+import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -15,11 +17,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,7 +41,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +62,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.net.URI
+import java.time.ZoneId
 
 /** A group of settings on a card, under a small caps label. */
 @Composable
@@ -114,21 +122,13 @@ fun SettingsScreen(vm: TasksViewModel, state: UiState, onBack: () -> Unit) {
                     }
                 }
             }
+            state.timezone?.let { zone -> Group("Your day") { DaySection(vm, DaySettings(zone, state.slotTimes)) } }
             Group("Account") {
                 Column(Modifier.padding(vertical = 12.dp)) {
                     Text("Signed in as ${state.username}", style = MaterialTheme.typography.bodyLarge)
                     runCatching { URI(state.baseUrl).host }.getOrNull()?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(Modifier.padding(vertical = 12.dp)) {
-                    Text("Time zone and slot times", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Set in realmdo's settings on your Realm.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 TextButton(
@@ -139,6 +139,116 @@ fun SettingsScreen(vm: TasksViewModel, state: UiState, onBack: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * The time zone and the four slot start times. Each change is saved at once;
+ * slot times out of order are refused here before the server sees them.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DaySection(vm: TasksViewModel, day: DaySettings) {
+    val ctx = LocalContext.current
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var pickZone by rememberSaveable { mutableStateOf(false) }
+    var pickSlot by rememberSaveable { mutableStateOf<String?>(null) }
+    val zones = remember { pickableZones() }
+    val offer = phoneZoneOffer(day.timezone, ZoneId.systemDefault().id, zones)
+    val save = { next: DaySettings ->
+        val bad = slotOrderError(next.slotTimes)
+        if (bad != null) error = bad
+        else {
+            busy = true
+            error = null
+            vm.saveDay(next) { err ->
+                busy = false
+                error = err
+            }
+        }
+    }
+    SettingRow("Time zone", zoneLabel(day.timezone), enabled = !busy) { pickZone = true }
+    if (offer != null) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "This phone is on ${zoneLabel(offer)}.",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.tertiary,
+            )
+            TextButton(onClick = { save(day.copy(timezone = offer)) }, enabled = !busy) { Text("Use it") }
+        }
+    }
+    SLOTS.forEach { slot ->
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        SettingRow(slotTitle(slot), day.slotTimes[slot] ?: "", enabled = !busy) { pickSlot = slot }
+    }
+    error?.let { Text(it, Modifier.padding(bottom = 12.dp), color = MaterialTheme.colorScheme.error) }
+
+    if (pickZone) {
+        ZoneDialog(zones, day.timezone, onDismiss = { pickZone = false }) { zone ->
+            pickZone = false
+            if (zone != day.timezone) save(day.copy(timezone = zone))
+        }
+    }
+    pickSlot?.let { slot ->
+        val start = day.slotTimes[slot]?.let(::minutesOf) ?: 0
+        val picker = rememberTimePickerState(start / 60, start % 60, is24Hour = DateFormat.is24HourFormat(ctx))
+        AlertDialog(
+            onDismissRequest = { pickSlot = null },
+            title = { Text("${slotTitle(slot)} starts") },
+            text = { TimePicker(picker) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickSlot = null
+                    val at = hhmm(picker.hour * 60 + picker.minute)
+                    if (at != day.slotTimes[slot]) save(day.copy(slotTimes = day.slotTimes + (slot to at)))
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { pickSlot = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** A label with its value under it; tap to change. */
+@Composable
+private fun SettingRow(label: String, value: String, enabled: Boolean, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(vertical = 12.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Every region zone, filtered as you type. */
+@Composable
+private fun ZoneDialog(zones: List<String>, current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val words = query.lowercase().split(' ', '/').filter { it.isNotBlank() }
+    val shown = zones.filter { z -> zoneLabel(z).lowercase().let { l -> words.all { it in l } } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Time zone") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query, onValueChange = { query = it }, placeholder = { Text("Search, like Stockholm") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(Modifier.height(360.dp)) {
+                    items(shown, key = { it }) { zone ->
+                        Text(
+                            zoneLabel(zone),
+                            Modifier.fillMaxWidth().clickable { onPick(zone) }.padding(vertical = 12.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (zone == current) FontWeight.SemiBold else null,
+                            color = if (zone == current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** The pinned task went stale in the background; the fix is under Settings. */

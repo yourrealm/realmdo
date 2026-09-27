@@ -280,8 +280,12 @@ again to step further). Deleting a task still deletes its history. Decided
      it" runs the unsaved steps in the player without a "Mark done". The steps
      join the task only when it is saved.
    - **Player** (see "Steps"): a ring counts the step down, a bar per step.
-   - **Settings:** the Live Update switch and background card, the account, sign
-     out. Time zone and slot times stay on the server's settings page.
+   - **Settings:** the Live Update switch and background card; "Your day" with
+     the time zone (a searchable list of region zones, plus "Use it" when the
+     phone's own zone differs) and the four slot start times (a time picker
+     each), saved on every change, slot order checked before sending; the
+     account, sign out. The realmdo page in Home edits the same settings. Added
+     2026-09-27, since `/api/settings` never needed a session.
 6. **The Live Update.** One notification for the top task, static (no countdown,
    no bar). Title is the task; the status-bar chip (`shortCriticalText`) is the
    title cut to about twelve characters; the second line is its standing ("due
