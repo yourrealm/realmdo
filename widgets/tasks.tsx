@@ -18,7 +18,7 @@ import { useState } from "@yourrealm/sdk/preact";
 export const title = "Tasks";
 export const icon: IconName = "ListChecksIcon";
 export const cols = 2;
-export const rows = 3;
+export const rows = 2;
 
 export const stateSchema = z.object({});
 export const configSchema = {

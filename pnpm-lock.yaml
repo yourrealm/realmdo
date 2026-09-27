@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@yourrealm/sdk':
-        specifier: 0.0.0-alpha.1378.ce03c8dc
-        version: 0.0.0-alpha.1378.ce03c8dc
+        specifier: 0.0.0-alpha.1389.2e2862b1
+        version: 0.0.0-alpha.1389.2e2862b1
     devDependencies:
       '@std/assert':
         specifier: npm:@jsr/std__assert@^1
@@ -625,8 +625,8 @@ packages:
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
 
-  '@yourrealm/sdk@0.0.0-alpha.1378.ce03c8dc':
-    resolution: {integrity: sha512-7sUpG+K6Y6JoZCAIhkYxNQC40VewkuW7nSsQJATuR+KXu3upkBNvlT2yeRr0qbxpuq3BicCsKzU80W64UAkQLQ==}
+  '@yourrealm/sdk@0.0.0-alpha.1389.2e2862b1':
+    resolution: {integrity: sha512-ZzezuiPiI3nRS2UijjHP33ApkJAxMlyw1/v7m1O4W1jwh2s48qsX1EadN/zyqLY+ZILxm0tOpmxmyt3LOkjrOA==}
     hasBin: true
 
   '@zag-js/accordion@1.43.3':
@@ -1117,6 +1117,9 @@ packages:
 
   proxy-memoize@3.0.1:
     resolution: {integrity: sha512-VDdG/VYtOgdGkWJx7y0o7p+zArSf2383Isci8C+BP3YXgMYDoPd3cCBjw0JdWb6YBb9sFiOPbAADDVTPJnh+9g==}
+
+  qr-creator@1.0.0:
+    resolution: {integrity: sha512-C0cqfbS1P5hfqN4NhsYsUXePlk9BO+a45bAQ3xLYjBL3bOIFzoVEjs79Fado9u9BPBD3buHi3+vY+C8tHh4qMQ==}
 
   quickjs-emscripten-core@0.32.0:
     resolution: {integrity: sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==}
@@ -1710,7 +1713,7 @@ snapshots:
 
   '@ungap/structured-clone@1.4.0': {}
 
-  '@yourrealm/sdk@0.0.0-alpha.1378.ce03c8dc':
+  '@yourrealm/sdk@0.0.0-alpha.1389.2e2862b1':
     dependencies:
       '@ark-ui/react': 5.39.2(@preact/compat@18.3.2(preact@10.29.8))(@preact/compat@18.3.2(preact@10.29.8))
       '@jitl/quickjs-wasmfile-release-asyncify': 0.32.0
@@ -1725,6 +1728,7 @@ snapshots:
       playwright-core: 1.58.0
       preact: 10.29.8(preact-render-to-string@6.7.0)
       preact-render-to-string: 6.7.0(preact@10.29.8)
+      qr-creator: 1.0.0
       quickjs-emscripten-core: 0.32.0
       react: '@preact/compat@18.3.2(preact@10.29.8)'
       react-dom: '@preact/compat@18.3.2(preact@10.29.8)'
@@ -2581,6 +2585,8 @@ snapshots:
   proxy-memoize@3.0.1:
     dependencies:
       proxy-compare: 3.0.1
+
+  qr-creator@1.0.0: {}
 
   quickjs-emscripten-core@0.32.0:
     dependencies:

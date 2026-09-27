@@ -57,6 +57,36 @@ Realm.describe(realmdo, import.meta.resolve("./realm.tsx"), ({ test }) => {
       assertEquals(call.headers, undefined);
     }
   });
+
+  test("the settings page reaches the api service as the viewer", async (t) => {
+    const result = await t.compile({ config, grants });
+    assert(!result.error);
+    const page = result.app.ui!.pages!.settings!;
+    assertEquals(page.title, "realmdo");
+    assertEquals(Object.keys(page.loaders!).sort(), [
+      "publicUrl",
+      "settings",
+      "tokens",
+    ]);
+    assertEquals(Object.keys(page.actions!).sort(), [
+      "createToken",
+      "disablePublicUrl",
+      "mintPublicUrl",
+      "revokeToken",
+      "saveSettings",
+    ]);
+    // Minting needs a session, which is what the brokered header is; a page
+    // must never declare it (see the widget test above).
+    for (
+      const call of [
+        ...Object.values(page.loaders!),
+        ...Object.values(page.actions!),
+      ]
+    ) {
+      assertEquals(call.service, "api");
+      assertEquals(call.headers, undefined);
+    }
+  });
 });
 
 // The harness's compile result carries services and trusted headers, not the

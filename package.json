@@ -22,7 +22,7 @@
     "android:install": "cd android && ./gradlew installDebug"
   },
   "dependencies": {
-    "@yourrealm/sdk": "0.0.0-alpha.1378.ce03c8dc"
+    "@yourrealm/sdk": "0.0.0-alpha.1389.2e2862b1"
   },
   "devDependencies": {
     "@std/assert": "npm:@jsr/std__assert@^1",

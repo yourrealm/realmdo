@@ -33,7 +33,7 @@ export default createApp({
       label: "API base URL",
       value: services.api ? `${services.api}/api` : null,
       description:
-        "Create a token under Settings in the web UI and send it as Authorization: Bearer <token>.",
+        "Create a token on realmdo's Settings page and send it as Authorization: Bearer <token>.",
     },
   }),
 

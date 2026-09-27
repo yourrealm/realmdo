@@ -26,10 +26,12 @@ verified on the S24 on 2026-09-25. On 2026-09-27 the list became the user's own
 order (dragged on Android) and Android learned everything the web UI did except
 settings, tokens and the public URL, in a new design (see "Android, as built");
 unit-tested; Today and Order seen on the S24 the same day, the editors not yet
-exercised there. The web UI is to be replaced by a Realm page for tokens, the
-public URL and settings once `QrCode` lands in the SDK (holden ticket
-`qr-code-in-sdk-ui`). The decisions below are the spec. When one changes, change
-it here.
+exercised there. The same day a Realm page (`pages/settings.tsx`) took over
+tokens with the pairing QR, the public URL and settings, on SDK
+`alpha.1389.2e2862b1` (`QrCode` and the `services` map). It cannot be tried
+under `realm-sdk dev` on macOS (see Commands); it was seen working on the live
+Realm on 2026-09-28, applied through Home's Replace source. The web UI can go.
+The decisions below are the spec. When one changes, change it here.
 
 ## Where to look in the Realm repo
 
@@ -153,14 +155,22 @@ and Android's Done tab. Decided 2026-09-23.
 2. **Web UI: React + Vite**, compiled to static files embedded in the binary.
    Served at the app's gated subdomain, which is where the brokered identity
    arrives. Keyboard-first, small.
-3. **Widgets:** `widgets/*.tsx` on the Realm UI surface, stitched by
-   `realm-sdk build`. Loaders call the `api` service; per-tile `configSchema`
-   chooses what the tile shows; actions add and toggle straight from the tile.
-   Since 2026-08-29 Home stamps the `getTrustedHeaders` mapping onto every
-   loader and action call, so a widget reaches the container as its viewer and
-   needs no identity of its own. Never declare `X-Realmdo-User` in a loader's
-   `headers`: Home drops colliding names (any casing) in favour of its own, and
-   declaring it would suggest the widget can pick a user.
+3. **Widgets and pages:** `widgets/*.tsx` and `pages/*.tsx` on the Realm UI
+   surface, stitched by `realm-sdk build`. The one page (`pages/settings.tsx`)
+   is listed in Home's sidebar as "realmdo" with a check icon, since a
+   "Settings" gear there reads as Home's own; inside, it is headed Settings. It
+   holds tokens (create, the pairing QR from the SDK's `QrCode`, revoke), the
+   TRMNL URL and the time zone and slot times. It builds the pairing link and
+   the full TRMNL URL from `services.api`, the app's own address as Home hands
+   it to a surface; `null` until the app is placed, and then the page says so.
+   Secrets and URLs sit in read-only fields that select themselves on focus: the
+   iframe may not write the clipboard. Loaders call the `api` service; per-tile
+   `configSchema` chooses what the tile shows; actions add and toggle straight
+   from the tile. Since 2026-08-29 Home stamps the `getTrustedHeaders` mapping
+   onto every loader and action call, so a widget reaches the container as its
+   viewer and needs no identity of its own. Never declare `X-Realmdo-User` in a
+   loader's `headers`: Home drops colliding names (any casing) in favour of its
+   own, and declaring it would suggest the widget can pick a user.
 4. **Gate:** `verifyAnonymousRequest` admits on request shape, nothing else.
    - `/api/`: admitted when an `Authorization: Bearer` header is present. The
      gate cannot verify per-user tokens (it runs in QuickJS with only method,
@@ -179,8 +189,8 @@ and Android's Done tab. Decided 2026-09-23.
    C cross-compiler, and Debian's `gcc-*-linux-gnu` packages are the
    well-trodden one. Published to Docker Hub as `benjick/realmdo`; `realm.tsx`
    references it by tag. Measured 51 MB.
-7. **`info`** on the app summary page: the API base URL and a "create a token
-   under Settings" hint.
+7. **`info`** on the app summary page: the API base URL and a "create a token on
+   the Settings page" hint.
 
 ### Time, as built
 
@@ -234,12 +244,12 @@ and Android's Done tab. Decided 2026-09-23.
    `SharedPreferences` and excluded from backup and device transfer. The app
    verifies it with `GET /api/me` before saving. Debug builds allow plain http
    (a dev server at `10.0.2.2:3000`); release is https only.
-3. **Pairing by QR.** Minting a token in the web UI also renders it as a QR code
-   (`qrcode.react`) holding `realmdo://pair?url=<origin>&token=<secret>`. The
-   app reads it two ways: a "Scan QR code" button using Google's code scanner
-   from Play services (no camera permission, no camera UI), and a
-   `realmdo://pair` intent filter so the phone's own camera app can open it.
-   Pasting the token by hand still works.
+3. **Pairing by QR.** Minting a token on the Settings page (and, until it goes,
+   the web UI) also renders it as a QR code holding
+   `realmdo://pair?url=<origin>&token=<secret>`. The app reads it two ways: a
+   "Scan QR code" button using Google's code scanner from Play services (no
+   camera permission, no camera UI), and a `realmdo://pair` intent filter so the
+   phone's own camera app can open it. Pasting the token by hand still works.
 4. **Design.** Drawn first as a canvas artifact (`realmdo Android`, ten phone
    screens) and built to match. The mark's palette instead of dynamic colour:
    lavender on warm cream, violet ink, clay for what is due; a violet-black dark
@@ -408,7 +418,10 @@ never an output. It needs `rsvg-convert` and `magick`
 `realm-sdk dev` shells out to an `esbuild` binary the SDK does not bring, so the
 root `package.json` pins the same `esbuild` holden's root does. It also needs
 the image locally: build the host arch with `docker buildx build --load` and tag
-it `benjick/realmdo:latest`.
+it `benjick/realmdo:latest`. On macOS its loaders and actions never answer: the
+dev server dials the container's bridge IP (the worker's `ui-proxy`), which
+Docker Desktop keeps inside its VM. Found 2026-09-27; the surfaces load, their
+calls time out.
 
 `cargo` needs `web/dist` to exist: `rust-embed` reads `../web/dist` at compile
 time (in debug builds it reads from disk at run time, so a rebuilt UI shows
