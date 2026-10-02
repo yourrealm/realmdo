@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
@@ -12,11 +13,15 @@ import java.util.Locale
  * English text to speech for the routine player. Each line cuts off the one
  * before it, and other audio (music at the gym) ducks while it talks.
  */
-class Voice(context: Context) : TextToSpeech.OnInitListener {
+class Voice(private val context: Context) : TextToSpeech.OnInitListener {
     private val audio = context.getSystemService(AudioManager::class.java)
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+    private val chime = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
         .build()
     private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
         .setAudioAttributes(attributes)
@@ -26,6 +31,7 @@ class Voice(context: Context) : TextToSpeech.OnInitListener {
     /** Said once the engine is up; the first line comes before that. */
     private var pending: String? = null
     private var count = 0
+    private var player: MediaPlayer? = null
 
     @Volatile
     private var last: String? = null
@@ -57,15 +63,31 @@ class Voice(context: Context) : TextToSpeech.OnInitListener {
             pending = text
             return
         }
+        player?.release()
+        player = null
         val id = "line-${count++}"
         last = id
         audio.requestAudioFocus(focus)
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
     }
 
+    /** A gong in place of words, for the end of a routine. */
+    fun gong() {
+        stop()
+        audio.requestAudioFocus(focus)
+        player = MediaPlayer.create(context, R.raw.gong, chime, AudioManager.AUDIO_SESSION_ID_GENERATE).apply {
+            setOnCompletionListener { stop() }
+            start()
+        }
+    }
+
     fun stop() {
         pending = null
+        // An interrupted line must not give back the focus the gong takes next.
+        last = null
         if (ready) tts.stop()
+        player?.release()
+        player = null
         audio.abandonAudioFocusRequest(focus)
     }
 

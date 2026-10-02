@@ -76,6 +76,9 @@ fun spokenDuration(seconds: Int): String {
 fun announcement(step: Step): String =
     "${(step.speech ?: step.title).trimEnd('.', ' ')}. ${spokenDuration(step.seconds)}."
 
+/** What the voice says ten seconds before [next] begins. */
+fun headsUp(next: Step): String = "10 seconds to ${next.title.trimEnd('.', ' ')}."
+
 /**
  * Why a task is out of the list for now, for the order screen: "back in 2 d",
  * "done for today". Null when it is showing.

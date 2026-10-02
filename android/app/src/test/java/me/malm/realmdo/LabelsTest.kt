@@ -89,6 +89,11 @@ class LabelsTest {
     }
 
     @Test
+    fun theHeadsUpNamesTheNextStep() {
+        assertEquals("10 seconds to Frog.", headsUp(Step("Frog.", "Hop around.", null, 60)))
+    }
+
+    @Test
     fun previousRestartsAStepUnderWayElseStepsBack() {
         assertEquals(2, previousIndex(2, elapsedMs = 10_000))
         assertEquals(1, previousIndex(2, elapsedMs = 1_000))

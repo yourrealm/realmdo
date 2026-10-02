@@ -27,7 +27,7 @@ data class RoutineState(
     val next: Step? get() = steps.getOrNull(index + 1)
 }
 
-/** The spoken warning before a step ends, and the shortest step that gets it. */
+/** The spoken heads-up before the next step, and the shortest step that gets it. */
 const val WARN_MS = 10_000L
 const val WARN_MIN_SECONDS = 20
 
@@ -117,7 +117,7 @@ class RoutineViewModel(app: Application) : AndroidViewModel(app) {
         ticker?.cancel()
         val s = _state.value ?: return
         _state.value = s.copy(leftMs = 0, running = false, finished = true)
-        voice.say("All done.")
+        voice.gong()
     }
 
     private fun tick(left: Long) {
@@ -136,7 +136,8 @@ class RoutineViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (!warned && now <= WARN_MS) {
                     warned = true
-                    if (s.step.seconds >= WARN_MIN_SECONDS) voice.say("10 seconds.")
+                    val next = s.next
+                    if (next != null && s.step.seconds >= WARN_MIN_SECONDS) voice.say(headsUp(next))
                 }
                 _state.value = s.copy(leftMs = now)
             }
