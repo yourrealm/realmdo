@@ -59,9 +59,10 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    fun refresh() {
+    /** A [quiet] refresh shows no spinner; it follows the user's own changes. */
+    fun refresh(quiet: Boolean = false) {
         val api = Api.from(prefs) ?: return
-        _state.update { it.copy(loading = true) }
+        if (!quiet) _state.update { it.copy(loading = true) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { api.tasks() } }
             // Re-read who the token maps to; the server's answer can change.
@@ -88,7 +89,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun done(task: Task) = mutate({ it.done(task.id, task.pendingSlot) })
+    fun done(task: Task) = mutate(task.id, { it.done(task.id, task.pendingSlot) })
 
     /** Creates or saves a task; [onDone] gets the error, or null once it is saved. */
     fun save(draft: Draft, onDone: (String?) -> Unit) {
@@ -99,11 +100,11 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { if (draft.id == null) api.create(body) else api.update(draft.id, body) }
             }
             onDone(result.exceptionOrNull()?.let { it.message ?: "request failed" })
-            if (result.isSuccess) refresh()
+            if (result.isSuccess) refresh(quiet = true)
         }
     }
 
-    fun delete(id: Long, title: String) = mutate({ it.delete(id) }, snack = "Deleted “$title”")
+    fun delete(id: Long, title: String) = mutate(id, { it.delete(id) }, snack = "Deleted “$title”")
 
     /**
      * Puts the tasks in this order. The list moves at once; the server's
@@ -123,7 +124,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 { e ->
                     _state.update { it.copy(error = e.message ?: "request failed") }
-                    refresh()
+                    refresh(quiet = true)
                 },
             )
         }
@@ -153,7 +154,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                 { e -> _state.update { it.copy(error = e.message ?: "request failed") } },
             )
             loadHistory()
-            refresh()
+            refresh(quiet = true)
         }
     }
 
@@ -169,7 +170,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                 { saved ->
                     _state.update { it.copy(slotTimes = saved.slotTimes, timezone = saved.timezone) }
                     onDone(null)
-                    refresh()
+                    refresh(quiet = true)
                 },
                 { onDone(it.message ?: "request failed") },
             )
@@ -213,8 +214,14 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun notify(tasks: List<Task>) =
         withContext(Dispatchers.IO) { TaskNotification.show(getApplication(), tasks) }
 
-    private fun mutate(call: (Api) -> Unit, snack: String? = null) {
+    /**
+     * Drops task [id] from the list at once, then calls the server. A quiet
+     * refresh brings back what the server still shows, such as a slot task's
+     * next slot, or the task itself on failure.
+     */
+    private fun mutate(id: Long, call: (Api) -> Unit, snack: String? = null) {
         val api = Api.from(prefs) ?: return
+        _state.update { s -> s.copy(tasks = s.tasks.filter { it.id != id }) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { call(api) } }
             _state.update { s ->
@@ -223,7 +230,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                     { e -> s.copy(error = e.message ?: "request failed") },
                 )
             }
-            refresh()
+            refresh(quiet = true)
         }
     }
 }
