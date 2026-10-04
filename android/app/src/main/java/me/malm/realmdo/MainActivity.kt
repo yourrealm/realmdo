@@ -81,13 +81,14 @@ private fun App(vm: TasksViewModel) {
     val draft by editor.draft.collectAsStateWithLifecycle()
     val steps by editor.routine.collectAsStateWithLifecycle()
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    val done = rememberDone(vm)
     when {
         !state.configured -> SetupScreen(vm, state)
         routine != null -> PlayerScreen(
             routine!!,
             routineVm,
             // The list's copy, for a pending slot that moved during the run.
-            onDone = { task -> vm.done(state.tasks.find { it.id == task.id } ?: task) },
+            onDone = { task -> done(state.tasks.find { it.id == task.id } ?: task) },
         )
         draft != null && steps != null -> RoutineEditorScreen(
             draft!!.title,
@@ -117,6 +118,7 @@ private fun Tabs(
     onAdd: () -> Unit,
     onEdit: (Task) -> Unit,
 ) {
+    val done = rememberDone(vm)
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
     var sheetId by rememberSaveable { mutableStateOf<Long?>(null) }
     val snackbar = remember { SnackbarHostState() }
@@ -182,7 +184,7 @@ private fun Tabs(
     if (sheetTask != null) {
         TaskSheet(
             sheetTask,
-            onDone = { vm.done(sheetTask) },
+            onDone = { done(sheetTask) },
             onStart = { onStart(sheetTask) },
             onEdit = { onEdit(sheetTask) },
             onDismiss = { sheetId = null },

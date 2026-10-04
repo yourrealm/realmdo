@@ -27,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -189,5 +191,15 @@ fun linkedText(text: String): AnnotatedString {
             at = m.range.last + 1
         }
         append(text.substring(at))
+    }
+}
+
+/** Marks a task done with a confirming buzz. */
+@Composable
+fun rememberDone(vm: TasksViewModel): (Task) -> Unit {
+    val haptics = LocalHapticFeedback.current
+    return { task ->
+        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+        vm.done(task)
     }
 }

@@ -62,6 +62,7 @@ fun TodayScreen(
     onSettings: () -> Unit,
 ) {
     var laterOpen by rememberSaveable { mutableStateOf(false) }
+    val done = rememberDone(vm)
     val visible = state.tasks.filter { it.urgency >= 0 }
     val later = state.tasks.filter(::isLater)
     val rest = visible.drop(1)
@@ -106,13 +107,13 @@ fun TodayScreen(
                 if (!state.loading) item(key = "empty") { AllClear(later.size) { laterOpen = true } }
             } else {
                 item(key = "top-${top.id}") {
-                    UpNext(top, state.liveUpdate, onOpen = { onOpen(top) }, onDone = { vm.done(top) }, onStart = { onStart(top) })
+                    UpNext(top, state.liveUpdate, onOpen = { onOpen(top) }, onDone = { done(top) }, onStart = { onStart(top) })
                 }
             }
             if (rest.isNotEmpty()) {
                 item(key = "then") { SectionLabel("Then", Modifier.padding(start = 20.dp, top = 22.dp, bottom = 8.dp)) }
                 itemsIndexed(rest, key = { _, t -> t.id }) { i, t ->
-                    TaskRow(t, i, rest.size, onOpen = { onOpen(t) }, onDone = { vm.done(t) }, onStart = { onStart(t) })
+                    TaskRow(t, i, rest.size, onOpen = { onOpen(t) }, onDone = { done(t) }, onStart = { onStart(t) })
                 }
             }
             if (later.isNotEmpty()) {
@@ -140,7 +141,7 @@ fun TodayScreen(
                         TaskRow(
                             t, i, later.size, Modifier.alpha(0.62f),
                             standing = hiddenLabel(t) ?: detail(t),
-                            onOpen = { onOpen(t) }, onDone = { vm.done(t) }, onStart = { onStart(t) },
+                            onOpen = { onOpen(t) }, onDone = { done(t) }, onStart = { onStart(t) },
                         )
                     }
                 }
