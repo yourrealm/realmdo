@@ -186,17 +186,17 @@ function Tokens({ loaders, actions, services }: Api) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Pair a phone</CardTitle>
+        <CardTitle>Pair a device</CardTitle>
         <CardDescription>
           Each device gets its own token. Create one, then scan the code with
-          the realmdo app. A token is shown once; revoke it here if the device
-          is lost.
+          the realmdo app, or paste the token and URL into the Mac app. A token
+          is shown once; revoke it here if the device is lost.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <form className="flex gap-2" onSubmit={create}>
           <Input
-            placeholder="Name: phone, TRMNL, script"
+            placeholder="Name: phone, Mac, TRMNL, script"
             aria-label="Token name"
             value={name}
             onValueChange={setName}
@@ -460,7 +460,7 @@ function Day({ loaders, actions }: Api) {
 export default ((props) => (
   <Page
     title="Settings"
-    subtitle="Pair a phone, feed TRMNL and set your day."
+    subtitle="Pair a device, feed TRMNL and set your day."
   >
     <div className="mx-auto max-w-3xl space-y-6 p-6">
       <Tokens {...props} />

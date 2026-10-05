@@ -17,6 +17,9 @@ share one JSON API:
   SDK.
 - `android/`: a thin Kotlin/Compose client (minSdk 31) that talks to `/api/`
   with a bearer token.
+- `macos/`: a SwiftUI host app plus a WidgetKit widget (macOS 14+) that talk to
+  `/api/` with a bearer token. `project.yml` is the source of truth; XcodeGen
+  generates the untracked `Realmdo.xcodeproj`.
 
 There is no web UI anymore. Leftover `web/` and `dist/` directories are
 untracked build artefacts.
@@ -44,6 +47,8 @@ pnpm dev                     # realm-sdk dev
 pnpm dev:server              # run the API locally on :3000 (REALMDO_PORT overrides), data in server/data
 pnpm android:build           # testDebugUnitTest lintDebug assembleDebug
 pnpm android:install
+pnpm macos:build             # xcodegen, then unit tests and a signed Debug build
+pnpm macos:open              # launch it; the widget appears once the app has run
 ```
 
 Single tests:
@@ -137,6 +142,18 @@ image.
 - JVM unit tests only. Anything that needs to be testable avoids `android.*`
   APIs (for example, `Pairing` parses with `java.net.URI`, and tests use the
   real `org.json`).
+
+## macOS
+
+- The host app only pairs: paste the server URL and token from the settings
+  page. It checks the token with `/api/me`, then stores it in a keychain item
+  that the widget shares through `keychain-access-groups`.
+- The widget refetches at the next slot start or midnight in the user's zone,
+  and at least every 30 minutes (`Schedule.swift`). Its check button is an
+  `AppIntent` (`DoneTask`) that calls `/done`; WidgetKit reloads afterwards.
+- When the server is unreachable it shows the last good list, marked offline.
+- Signing uses automatic provisioning on the team in `project.yml`, so Xcode
+  needs an Apple account signed in. Personal-team builds expire after 7 days.
 
 ## Conventions
 

@@ -5,3 +5,7 @@ realm-bundle.tsx
 .DS_Store
 *.log
 server/data
+macos/Realmdo.xcodeproj
+macos/*/Info.plist
+macos/*/*.entitlements
+macos/build
