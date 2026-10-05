@@ -180,7 +180,7 @@ fun RoutineEditorScreen(
                     if (all.isEmpty()) {
                         Text(
                             "A routine is a list of timed steps, read aloud one at a time. " +
-                                "Left and right are two steps; add one and the other is a tap away.",
+                                "Add a left or right step to get the other side in one tap.",
                             Modifier.padding(top = 16.dp),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

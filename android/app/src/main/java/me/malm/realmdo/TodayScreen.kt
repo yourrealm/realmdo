@@ -248,7 +248,7 @@ private fun AllClear(later: Int, onShowLater: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text("Nothing due", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (later > 0) "$later coming up later. Get ahead, or enjoy it." else "Add something, or enjoy it.",
+                    if (later > 0) "$later coming up later." else "Add a task.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

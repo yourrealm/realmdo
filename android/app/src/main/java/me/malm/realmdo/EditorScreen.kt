@@ -238,7 +238,7 @@ private fun KindBadge(kind: String) {
         ) {
             Icon(Glyph.kind(kind), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                "${KINDS.first { it.first == kind }.second} · the kind stays",
+                KINDS.first { it.first == kind }.second,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -326,7 +326,7 @@ private fun RepeatSection(draft: Draft, editor: EditorViewModel) {
             }
         }
         if (!tuning) {
-            Chip("Urgent sooner or later…", false) { tuning = true }
+            Chip("Change urgency", false) { tuning = true }
         }
     }
 }
