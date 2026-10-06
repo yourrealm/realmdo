@@ -107,7 +107,7 @@ fun TodayScreen(
                 if (!state.loading) item(key = "empty") { AllClear(later.size) { laterOpen = true } }
             } else {
                 item(key = "top-${top.id}") {
-                    UpNext(top, state.liveUpdate, onOpen = { onOpen(top) }, onDone = { done(top) }, onStart = { onStart(top) })
+                    UpNext(top, onOpen = { onOpen(top) }, onDone = { done(top) }, onStart = { onStart(top) })
                 }
             }
             if (rest.isNotEmpty()) {
@@ -152,7 +152,7 @@ fun TodayScreen(
 
 /** The top task, large: what the notification shows, with Done at hand. */
 @Composable
-private fun UpNext(task: Task, pinned: Boolean, onOpen: () -> Unit, onDone: () -> Unit, onStart: () -> Unit) {
+private fun UpNext(task: Task, onOpen: () -> Unit, onDone: () -> Unit, onStart: () -> Unit) {
     Card(
         onClick = onOpen,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -163,17 +163,7 @@ private fun UpNext(task: Task, pinned: Boolean, onOpen: () -> Unit, onDone: () -
         ),
     ) {
         Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("UP NEXT", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                Spacer(Modifier.weight(1f))
-                if (pinned) {
-                    Text(
-                        "pinned to your notification",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.alpha(0.8f),
-                    )
-                }
-            }
+            Text("UP NEXT", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
             Spacer(Modifier.height(6.dp))
             Text(
                 task.title,
