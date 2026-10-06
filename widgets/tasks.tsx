@@ -127,9 +127,9 @@ export default (({ loaders, actions, config }) => {
   return (
     <div class="flex h-full flex-col gap-1 bg-sidebar p-2.5 text-sm">
       {top && (
-        <div class="flex shrink-0 items-center gap-2.5 rounded-2xl bg-[color-mix(in_oklab,var(--primary)_12%,transparent)] py-2.5 pl-3.5 pr-2.5">
+        <div class="flex shrink-0 items-center gap-2.5 rounded-2xl bg-primary/12 py-2.5 pl-3.5 pr-2.5">
           <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-            <p class="text-xs font-bold text-(color:--accent-foreground)">
+            <p class="text-xs font-bold text-accent-foreground">
               {top.pending_slot
                 ? `Up next · ${SLOT_LABEL[top.pending_slot]}`
                 : "Up next"}
@@ -161,8 +161,8 @@ export default (({ loaders, actions, config }) => {
             >
               <span
                 class={t.important
-                  ? "size-4 rounded-full border-2 border-(color:--primary) bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
-                  : "size-4 rounded-full border-[1.5px] border-(color:--muted-foreground) group-hover:border-(color:--foreground)"}
+                  ? "size-4 rounded-full border-2 border-primary bg-primary/12"
+                  : "size-4 rounded-full border-[1.5px] border-muted-foreground group-hover:border-foreground"}
               />
             </button>
             <span
