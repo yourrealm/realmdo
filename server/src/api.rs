@@ -310,7 +310,11 @@ fn view(task: db::Task, ctx: &Ctx) -> TaskView {
     let today = ctx.local.day;
     let (urgency, statuses) = match task.kind {
         db::Kind::Once => (
-            urgency::once(task.due_on.as_deref().and_then(date::parse_day), today),
+            urgency::once(
+                task.due_on.as_deref().and_then(date::parse_day),
+                task.lead_days,
+                today,
+            ),
             None,
         ),
         db::Kind::Interval => {
@@ -473,6 +477,7 @@ struct NewTask {
     #[serde(default = "default_kind")]
     kind: db::Kind,
     due_on: Option<String>,
+    lead_days: Option<i64>,
     after_days: Option<i64>,
     ramp_days: Option<i64>,
     slots: Option<Vec<Slot>>,
@@ -557,11 +562,16 @@ fn validate_new_task(body: &NewTask) -> Result<(Option<String>, Option<Vec<Slot>
             {
                 return Err(bad("due_on must be YYYY-MM-DD"));
             }
+            if let Some(l) = body.lead_days
+                && !(0..=MAX_DAYS).contains(&l)
+            {
+                return Err(bad("lead_days must be 0 to 3650"));
+            }
             Ok((due_on, None))
         }
         db::Kind::Interval => {
-            if due_on.is_some() {
-                return Err(bad("due_on is for one-off tasks"));
+            if due_on.is_some() || body.lead_days.is_some() {
+                return Err(bad("due_on and lead_days are for one-off tasks"));
             }
             if body.slots.is_some() {
                 return Err(bad("slots are for slot tasks"));
@@ -578,7 +588,7 @@ fn validate_new_task(body: &NewTask) -> Result<(Option<String>, Option<Vec<Slot>
             Ok((None, None))
         }
         db::Kind::Slot => {
-            if due_on.is_some() || has_interval_fields {
+            if due_on.is_some() || body.lead_days.is_some() || has_interval_fields {
                 return Err(bad("a slot task takes only title and slots"));
             }
             let mut slots: Vec<Slot> = body.slots.clone().unwrap_or_default();
@@ -616,6 +626,7 @@ async fn create_task(
                 title: &title,
                 kind: body.kind,
                 due_on: due_on.as_deref(),
+                lead_days: body.lead_days,
                 after_days: body.after_days,
                 ramp_days: body.ramp_days,
                 slots,
@@ -629,7 +640,7 @@ async fn create_task(
 }
 
 /// A partial edit. Absent fields keep their value; `due_on: null` clears the
-/// date, `ramp_days: null` returns to the default ramp, `notes: null` (or
+/// date, `lead_days: null` and `ramp_days: null` return to the defaults, `notes: null` (or
 /// blank) clears the notes and `steps: null` (or `[]`) clears the steps.
 #[derive(Deserialize)]
 struct TaskPatch {
@@ -637,6 +648,8 @@ struct TaskPatch {
     kind: Option<db::Kind>,
     #[serde(default, deserialize_with = "double_option")]
     due_on: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    lead_days: Option<Option<i64>>,
     after_days: Option<i64>,
     #[serde(default, deserialize_with = "double_option")]
     ramp_days: Option<Option<i64>>,
@@ -690,6 +703,7 @@ async fn patch_task(
         None => current.title.clone(),
     };
     let mut due_on = current.due_on.clone();
+    let mut lead_days = current.lead_days;
     let mut after_days = current.after_days;
     let mut ramp_days = current.ramp_days;
     let mut slots = current.slots.clone();
@@ -717,10 +731,18 @@ async fn patch_task(
                     return Err(bad("due_on must be YYYY-MM-DD"));
                 }
             }
+            if let Some(l) = patch.lead_days {
+                if let Some(v) = l
+                    && !(0..=MAX_DAYS).contains(&v)
+                {
+                    return Err(bad("lead_days must be 0 to 3650"));
+                }
+                lead_days = l;
+            }
         }
         db::Kind::Interval => {
-            if patch.due_on.is_some() {
-                return Err(bad("due_on is for one-off tasks"));
+            if patch.due_on.is_some() || patch.lead_days.is_some() {
+                return Err(bad("due_on and lead_days are for one-off tasks"));
             }
             if patch.slots.is_some() {
                 return Err(bad("slots are for slot tasks"));
@@ -741,7 +763,11 @@ async fn patch_task(
             }
         }
         db::Kind::Slot => {
-            if patch.due_on.is_some() || patch.after_days.is_some() || patch.ramp_days.is_some() {
+            if patch.due_on.is_some()
+                || patch.lead_days.is_some()
+                || patch.after_days.is_some()
+                || patch.ramp_days.is_some()
+            {
                 return Err(bad("a slot task takes only title and slots"));
             }
             if let Some(mut s) = patch.slots {
@@ -759,6 +785,7 @@ async fn patch_task(
             let upd = db::TaskUpdate {
                 title: &title,
                 due_on: due_on.as_deref(),
+                lead_days,
                 after_days,
                 ramp_days,
                 slots,
@@ -1227,6 +1254,8 @@ mod tests {
             json!({ "title": "x", "kind": "interval", "after_days": -1 }),
             json!({ "title": "x", "kind": "interval", "after_days": 3, "ramp_days": 0 }),
             json!({ "title": "x", "kind": "interval", "after_days": 3, "due_on": "2026-09-01" }),
+            json!({ "title": "x", "kind": "interval", "after_days": 3, "lead_days": 1 }),
+            json!({ "title": "x", "due_on": "2026-09-01", "lead_days": -1 }),
             json!({ "title": "x", "kind": "slot" }),
             json!({ "title": "x", "kind": "slot", "slots": [] }),
             json!({ "title": "x", "kind": "slot", "slots": ["lunch"] }),
@@ -1375,6 +1404,16 @@ mod tests {
                 Some(body),
             )
         };
+
+        // Due in 11 days: hidden by default, showing once the lead covers it.
+        assert!(once["urgency"].as_f64().unwrap() < 0.0);
+        let (status, body) = call(&app, patch(once_id, json!({ "lead_days": 11 }))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["lead_days"], 11);
+        assert_eq!(body["urgency"], 0.0);
+        let (_, body) = call(&app, patch(once_id, json!({ "lead_days": null }))).await;
+        assert_eq!(body["lead_days"], Value::Null, "back to the default lead");
+        assert!(body["urgency"].as_f64().unwrap() < 0.0);
 
         let (status, body) = call(
             &app,

@@ -17,6 +17,7 @@ class DraftTest {
         assertEquals("Book dentist", o.getString("title"))
         assertEquals("once", o.getString("kind"))
         assertTrue(o.isNull("due_on"))
+        assertTrue("default lead is an explicit null", o.isNull("lead_days"))
         assertTrue(o.isNull("notes"))
         assertTrue(o.isNull("steps"))
         assertFalse(o.has("after_days"))
@@ -30,6 +31,15 @@ class DraftTest {
         assertEquals(6, o.getInt("after_days"))
         assertTrue("default ramp is an explicit null", o.isNull("ramp_days"))
         assertFalse(o.has("due_on"))
+    }
+
+    @Test
+    fun aLeadTravelsWithTheDueDate() {
+        val o = Draft(title = "Coop prep", dueOn = "2026-10-11", leadDays = 0).toJson()
+        assertEquals(0, o.getInt("lead_days"))
+        assertFalse(Draft(title = "Bathroom", kind = "interval").toJson().has("lead_days"))
+        assertEquals("Shows up on the day it is due.", leadHelp(0))
+        assertEquals("Shows up 7 days before it is due.", leadHelp(null))
     }
 
     @Test

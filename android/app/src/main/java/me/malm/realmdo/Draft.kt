@@ -15,6 +15,9 @@ const val MAX_STEP_DETAILS = 2000
 const val MAX_STEP_SECONDS = 6 * 3600
 const val MAX_DAYS = 3650
 
+/** Days before its due date a one-off shows up, unless it sets its own. */
+const val DEFAULT_LEAD_DAYS = 7
+
 /**
  * A task being written in the editor: a new one ([id] null) or an edit. The
  * kind of an existing task is fixed, as the API requires.
@@ -25,6 +28,8 @@ data class Draft(
     val kind: String = "once",
     /** One-off: `YYYY-MM-DD`, or none. */
     val dueOn: String? = null,
+    /** One-off: days before [dueOn] it shows up; null is [DEFAULT_LEAD_DAYS]. */
+    val leadDays: Int? = null,
     /** Interval: days out of sight after a completion. */
     val afterDays: Int = 3,
     /** Interval: days from appearing to urgent; null is the default (the same as [afterDays]). */
@@ -53,7 +58,7 @@ data class Draft(
         val o = JSONObject().put("title", title.trim())
         if (isNew) o.put("kind", kind)
         when (kind) {
-            "once" -> o.put("due_on", dueOn ?: JSONObject.NULL)
+            "once" -> o.put("due_on", dueOn ?: JSONObject.NULL).put("lead_days", leadDays ?: JSONObject.NULL)
             "interval" -> o.put("after_days", afterDays).put("ramp_days", rampDays ?: JSONObject.NULL)
             "slot" -> o.put("slots", JSONArray(SLOTS.filter { it in slots }))
         }
@@ -68,6 +73,7 @@ data class Draft(
             title = t.title,
             kind = t.kind,
             dueOn = t.dueOn,
+            leadDays = t.leadDays?.toInt(),
             afterDays = (t.afterDays ?: 3).toInt(),
             rampDays = t.rampDays?.toInt(),
             slots = t.slots.orEmpty().toSet(),

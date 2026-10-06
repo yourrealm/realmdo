@@ -129,7 +129,7 @@ fun EditorScreen(
                 KindBadge(draft.kind)
             }
             when (draft.kind) {
-                "once" -> DueSection(draft.dueOn) { d -> editor.update { it.copy(dueOn = d) } }
+                "once" -> DueSection(draft, editor)
                 "interval" -> RepeatSection(draft, editor)
                 "slot" -> SlotSection(draft.slots, slotTimes) { s -> editor.update { it.copy(slots = s) } }
             }
@@ -248,9 +248,12 @@ private fun KindBadge(kind: String) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun DueSection(dueOn: String?, onChange: (String?) -> Unit) {
+private fun DueSection(draft: Draft, editor: EditorViewModel) {
+    val dueOn = draft.dueOn
+    val onChange = { d: String? -> editor.update { it.copy(dueOn = d) } }
     val today = LocalDate.now()
     var picking by rememberSaveable { mutableStateOf(false) }
+    var tuning by rememberSaveable { mutableStateOf(draft.leadDays != null) }
     val picked = dueOn != null && dueOn != today.toString() && dueOn != today.plusDays(1).toString()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionLabel("Due")
@@ -259,6 +262,31 @@ private fun DueSection(dueOn: String?, onChange: (String?) -> Unit) {
             Chip("Today", dueOn == today.toString()) { onChange(today.toString()) }
             Chip("Tomorrow", dueOn == today.plusDays(1).toString()) { onChange(today.plusDays(1).toString()) }
             Chip(if (picked) shortDate(dueOn!!) else "Pick a day", picked, Glyph.Calendar) { picking = true }
+        }
+        if (dueOn != null) {
+            if (tuning) {
+                SectionLabel("Shows up", Modifier.padding(top = 6.dp))
+                val lead = draft.leadDays ?: DEFAULT_LEAD_DAYS
+                DayStepper(
+                    label = if (lead == 0) "On the day" else "${days(lead)} before",
+                    value = lead,
+                    range = 0..MAX_DAYS,
+                ) { n -> editor.update { it.copy(leadDays = n) } }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    leadHelp(draft.leadDays),
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (tuning && draft.leadDays != null) {
+                    TextButton(onClick = { editor.update { it.copy(leadDays = null) } }) { Text("Reset") }
+                }
+            }
+            if (!tuning) {
+                Chip("Change when it shows", false) { tuning = true }
+            }
         }
     }
     if (picking) {

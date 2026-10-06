@@ -114,8 +114,9 @@ image.
   `slots.rs`). A task can also carry timed `steps` (a routine that the Android
   player speaks aloud) and `notes`.
 - **Urgency** (`urgency.rs`) is computed on read and never stored. It is below 0
-  when hidden and ≥1 when "important". The user's manual order is
-  `tasks.position` (`PUT /api/tasks/order`).
+  when hidden and ≥1 when "important". A dated one-off shows up `lead_days`
+  before its due date (7 when null, 0 means the day itself). The user's manual
+  order is `tasks.position` (`PUT /api/tasks/order`).
 - **Time**: every "today" and "now" is in the user's IANA time zone (`clock.rs`,
   via jiff, falling back to UTC). Calendar days are integer days since the epoch
   (`date.rs`), and completions store the local `day` key and `slot`.

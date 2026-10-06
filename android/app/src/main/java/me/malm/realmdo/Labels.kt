@@ -128,6 +128,12 @@ fun timeOfDay(epochSeconds: Long, zone: ZoneId = ZoneId.systemDefault()): String
 /** "1 day", "6 days". */
 fun days(n: Int): String = if (n == 1) "1 day" else "$n days"
 
+/** When a dated one-off shows up, in the editor's words. */
+fun leadHelp(lead: Int?): String = when (val n = lead ?: DEFAULT_LEAD_DAYS) {
+    0 -> "Shows up on the day it is due."
+    else -> "Shows up ${days(n)} before it is due."
+}
+
 /** What the interval numbers mean, in the editor's words. */
 fun repeatHelp(after: Int, ramp: Int?): String {
     val urgent = ramp ?: maxOf(after, 1)

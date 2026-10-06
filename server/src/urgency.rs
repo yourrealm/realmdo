@@ -5,16 +5,26 @@
 use crate::slots::{Slot, SlotTimes};
 use serde::Serialize;
 
-/// Days before its due date at which a dated one-off enters the list.
-const ONCE_HORIZON_DAYS: f64 = 7.0;
+/// Days before its due date at which a dated one-off enters the list, unless
+/// the task sets its own.
+pub const ONCE_LEAD_DAYS: i64 = 7;
 /// Where an undated one-off sits: fixed, in the middle.
 const ONCE_UNDATED: f64 = 0.5;
 
-/// One-off task: reaches 1 on the due day and keeps rising after it.
-pub fn once(due_day: Option<i64>, today: i64) -> f64 {
-    match due_day {
-        None => ONCE_UNDATED,
-        Some(due) => 1.0 + (today - due) as f64 / ONCE_HORIZON_DAYS,
+/// One-off task: hidden until `lead` days before the due day, then rising
+/// from 0 to reach 1 on the due day, and on past it. A lead of 0 shows up at
+/// 1 on the day itself.
+pub fn once(due_day: Option<i64>, lead: Option<i64>, today: i64) -> f64 {
+    let Some(due) = due_day else {
+        return ONCE_UNDATED;
+    };
+    let lead = lead.unwrap_or(ONCE_LEAD_DAYS).max(0);
+    let rate = lead.max(1) as f64;
+    if due - today > lead {
+        // Hidden; the general formula would put a lead of 0 at 0 the day before.
+        (lead - (due - today)) as f64 / rate
+    } else {
+        1.0 + (today - due) as f64 / rate
     }
 }
 
@@ -84,13 +94,32 @@ mod tests {
     #[test]
     fn once_rises_to_one_on_the_due_day() {
         let today = 20_000;
-        assert_eq!(once(None, today), 0.5);
-        assert_eq!(once(Some(today), today), 1.0);
-        assert_eq!(once(Some(today + 7), today), 0.0);
-        assert!(once(Some(today + 14), today) < 0.0, "far out is hidden");
-        assert_eq!(once(Some(today - 7), today), 2.0);
-        assert!(!is_important(once(Some(today + 1), today)));
-        assert!(is_important(once(Some(today), today)));
+        assert_eq!(once(None, None, today), 0.5);
+        assert_eq!(once(Some(today), None, today), 1.0);
+        assert_eq!(once(Some(today + 7), None, today), 0.0);
+        assert!(
+            once(Some(today + 8), None, today) < 0.0,
+            "far out is hidden"
+        );
+        assert_eq!(once(Some(today - 7), None, today), 2.0);
+        assert!(!is_important(once(Some(today + 1), None, today)));
+        assert!(is_important(once(Some(today), None, today)));
+    }
+
+    #[test]
+    fn once_lead_sets_when_it_shows_up() {
+        let today = 20_000;
+        // Two days ahead: hidden at 3, appears at 2, halfway at 1.
+        assert!(once(Some(today + 3), Some(2), today) < 0.0);
+        assert_eq!(once(Some(today + 2), Some(2), today), 0.0);
+        assert_eq!(once(Some(today + 1), Some(2), today), 0.5);
+        assert_eq!(once(Some(today), Some(2), today), 1.0);
+        // On the day only: hidden the day before, important on the day.
+        assert!(once(Some(today + 1), Some(0), today) < 0.0);
+        assert_eq!(once(Some(today), Some(0), today), 1.0);
+        assert_eq!(once(Some(today - 1), Some(0), today), 2.0);
+        // A lead does nothing without a date.
+        assert_eq!(once(None, Some(0), today), 0.5);
     }
 
     #[test]

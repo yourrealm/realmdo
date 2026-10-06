@@ -49,6 +49,8 @@ data class Task(
     val notes: String?,
     /** A timed routine. */
     val steps: List<Step>? = null,
+    /** One-off: days before the due date it shows up; null is the default. */
+    val leadDays: Long? = null,
     /** Interval: days from appearing to important; null is the default. */
     val rampDays: Long? = null,
     /** Slot: which slots of the day, in day order. */
@@ -77,6 +79,7 @@ data class Task(
             steps = o.optJSONArray("steps")?.let { arr ->
                 (0 until arr.length()).map { Step.from(arr.getJSONObject(it)) }
             }?.takeIf { it.isNotEmpty() },
+            leadDays = if (o.isNull("lead_days")) null else o.optLong("lead_days"),
             rampDays = if (o.isNull("ramp_days")) null else o.optLong("ramp_days"),
             slots = o.optJSONArray("slots")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } },
             createdAt = o.optLong("created_at"),

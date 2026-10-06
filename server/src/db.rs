@@ -73,6 +73,8 @@ pub struct Task {
     pub kind: Kind,
     /// `YYYY-MM-DD`, one-off tasks only.
     pub due_on: Option<String>,
+    /// One-off: days before the due date it shows up. `None` means the default.
+    pub lead_days: Option<i64>,
     /// Interval: days hidden after a completion.
     pub after_days: Option<i64>,
     /// Interval: days from appearing to important. `None` means the default.
@@ -185,6 +187,8 @@ const MIGRATIONS: &[&str] = &[
     // order they were created in.
     "ALTER TABLE tasks ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
     UPDATE tasks SET position = id;",
+    // v9: how many days before its due date a one-off shows up.
+    "ALTER TABLE tasks ADD COLUMN lead_days INTEGER;",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -415,7 +419,7 @@ const TASK_SELECT: &str =
         (SELECT MAX(c.completed_at) FROM completions c WHERE c.task_id = t.id),
         (SELECT GROUP_CONCAT(c.slot) FROM completions c
             WHERE c.task_id = t.id AND c.day = :day AND c.slot IS NOT NULL),
-        t.steps, t.position
+        t.steps, t.position, t.lead_days
      FROM tasks t";
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
@@ -440,6 +444,7 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         title: r.get(1)?,
         kind: r.get(2)?,
         due_on: r.get(3)?,
+        lead_days: r.get(14)?,
         after_days: r.get(4)?,
         ramp_days: r.get(5)?,
         slots,
@@ -483,6 +488,7 @@ pub struct NewTask<'a> {
     pub title: &'a str,
     pub kind: Kind,
     pub due_on: Option<&'a str>,
+    pub lead_days: Option<i64>,
     pub after_days: Option<i64>,
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
@@ -505,8 +511,8 @@ pub fn insert_task(
     // New tasks go to the top of the user's order.
     let id: i64 = conn.query_row(
         "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, notes,
-            steps, created_at, position)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+            steps, created_at, lead_days, position)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
             (SELECT COALESCE(MIN(position), 1) - 1 FROM tasks
              WHERE user_id = ?1 AND done_at IS NULL))
          RETURNING id",
@@ -520,7 +526,8 @@ pub fn insert_task(
             slots,
             new.notes,
             steps,
-            now
+            now,
+            new.lead_days
         ],
         |r| r.get(0),
     )?;
@@ -535,6 +542,7 @@ fn steps_json(steps: &[Step]) -> String {
 pub struct TaskUpdate<'a> {
     pub title: &'a str,
     pub due_on: Option<&'a str>,
+    pub lead_days: Option<i64>,
     pub after_days: Option<i64>,
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
@@ -557,7 +565,7 @@ pub fn update_task(
     let steps = upd.steps.map(steps_json);
     let n = conn.execute(
         "UPDATE tasks SET title = ?3, due_on = ?4, after_days = ?5, ramp_days = ?6, slots = ?7,
-            notes = ?8, steps = ?9
+            notes = ?8, steps = ?9, lead_days = ?10
          WHERE id = ?1 AND user_id = ?2",
         params![
             id,
@@ -568,7 +576,8 @@ pub fn update_task(
             upd.ramp_days,
             slots,
             upd.notes,
-            steps
+            steps,
+            upd.lead_days
         ],
     )?;
     if n == 0 {
@@ -724,6 +733,7 @@ mod tests {
             title,
             kind: Kind::Once,
             due_on,
+            lead_days: None,
             after_days: None,
             ramp_days: None,
             slots: None,
@@ -737,6 +747,7 @@ mod tests {
             title,
             kind: Kind::Interval,
             due_on: None,
+            lead_days: None,
             after_days: Some(after),
             ramp_days: ramp,
             slots: None,
@@ -750,6 +761,7 @@ mod tests {
             title,
             kind: Kind::Slot,
             due_on: None,
+            lead_days: None,
             after_days: None,
             ramp_days: None,
             slots: Some(slots.to_vec()),
@@ -911,6 +923,7 @@ mod tests {
         let upd = TaskUpdate {
             title: "scrub",
             due_on: None,
+            lead_days: None,
             after_days: None,
             ramp_days: None,
             slots: None,
@@ -960,6 +973,7 @@ mod tests {
         let mut upd = TaskUpdate {
             title: "yoga",
             due_on: None,
+            lead_days: None,
             after_days: Some(2),
             ramp_days: None,
             slots: None,
