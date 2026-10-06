@@ -57,6 +57,25 @@ fun chip(t: Task, max: Int = 12): String {
     return (if (atWord >= max / 2) cut.substring(0, atWord) else cut).trimEnd() + "…"
 }
 
+/**
+ * The chip's colour, one per Monday-to-Sunday week, cycling through
+ * [CHIP_COLORS]. The lavender accent comes first. Each reads under white text.
+ */
+fun chipColor(today: LocalDate = LocalDate.now()): Int {
+    // 1970-01-01 was a Thursday, so +3 starts each week on Monday.
+    val week = Math.floorDiv(today.toEpochDay() + 3, 7)
+    return CHIP_COLORS[Math.floorMod(week, CHIP_COLORS.size.toLong()).toInt()]
+}
+
+val CHIP_COLORS = intArrayOf(
+    0xFF7B64E0.toInt(), // lavender
+    0xFF1F8A7A.toInt(), // teal
+    0xFFB8461F.toInt(), // terracotta
+    0xFF2F6FD1.toInt(), // blue
+    0xFFC2416B.toInt(), // rose
+    0xFF4F8A2B.toInt(), // green
+)
+
 /** 90 -> "1:30". */
 fun clock(seconds: Int): String = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 

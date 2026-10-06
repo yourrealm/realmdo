@@ -1,6 +1,7 @@
 package me.malm.realmdo
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
@@ -58,6 +59,17 @@ class LabelsTest {
         assertEquals("before lunch ✓ · evening upcoming", detail(t, TODAY))
         val now = task("slot", today = listOf("before_lunch" to "current"))
         assertEquals("before lunch now", detail(now, TODAY))
+    }
+
+    @Test
+    fun chipColorHoldsForAWeekThenMoves() {
+        // 2026-09-14 is a Monday.
+        val monday = LocalDate.of(2026, 9, 14)
+        val week = chipColor(monday)
+        (1L..6L).forEach { assertEquals(week, chipColor(monday.plusDays(it))) }
+        assertNotEquals(week, chipColor(monday.plusDays(7)))
+        assertNotEquals(week, chipColor(monday.minusDays(1)))
+        assertEquals(week, chipColor(monday.plusWeeks(CHIP_COLORS.size.toLong())))
     }
 
     @Test

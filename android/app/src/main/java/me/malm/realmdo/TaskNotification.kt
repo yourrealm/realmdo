@@ -72,7 +72,7 @@ object TaskNotification {
         val next = visible.drop(1).take(NEXT_SHOWN)
         val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(icon(task))
-            .setColor(ctx.getColor(R.color.accent))
+            .setColor(chipColor())
             .setContentTitle(task.title)
             .setShortCriticalText(chip(task))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
