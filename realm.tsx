@@ -12,6 +12,7 @@ import { createApp } from "@yourrealm/sdk";
 
 export default createApp({
   name: "realmdo",
+  icon: "ph:check-square",
   description:
     "A todo list that creeps up on you: one-off, interval and daily-slot tasks, per user.",
 

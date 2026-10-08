@@ -35,6 +35,8 @@ jobs:
   realm:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
@@ -56,6 +58,18 @@ jobs:
           deno check
           pnpm exec realm-sdk test
           pnpm exec realm-sdk build --out dist/realmdo.realmpack
+
+      # pages/ and widgets/ make realm.tsx more than one file, so Home installs
+      # this app from the pack. One release, its asset replaced on every push
+      # to main.
+      - name: Publish the realmpack
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view realmpack >/dev/null 2>&1 || gh release create realmpack --title realmpack --notes ""
+          gh release upload realmpack dist/realmdo.realmpack --clobber
+          gh release edit realmpack --notes "Built from ${GITHUB_SHA::8} on main."
 
   android:
     runs-on: ubuntu-latest
