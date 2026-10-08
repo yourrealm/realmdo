@@ -9,7 +9,8 @@ realmdo is a per-user todo app deployed as a Realm app. Three independent parts
 share one JSON API:
 
 - `server/`: Rust (axum + rusqlite) JSON API over one SQLite file. It is the
-  only thing in the Docker image (`benjick/realmdo`, distroless, no shell).
+  only thing in the Docker image (`ghcr.io/yourrealm/realmdo`, distroless, no
+  shell).
 - `realm.tsx`, `widgets/`, `pages/`: the Realm SDK (`@yourrealm/sdk`) manifest
   plus a Home widget (`widgets/tasks.tsx`) and a settings page
   (`pages/settings.tsx`). These describe the deployment and UI. They never run

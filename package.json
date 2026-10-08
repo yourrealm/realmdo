@@ -15,7 +15,7 @@
     "build:pack": "realm-sdk build --out dist/realmdo.realmpack",
     "dev": "realm-sdk dev",
     "dev:server": "REALMDO_DATA_DIR=./server/data PORT=${REALMDO_PORT:-3000} cargo run --manifest-path server/Cargo.toml",
-    "build:image": "docker buildx build --platform linux/amd64,linux/arm64 -t benjick/realmdo:latest .",
+    "build:image": "docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/yourrealm/realmdo:latest .",
     "android:build": "cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug",
     "android:install": "cd android && ./gradlew installDebug",
     "macos:build": "cd macos && xcodegen -q && xcodebuild -project Realmdo.xcodeproj -scheme Realmdo -derivedDataPath build -allowProvisioningUpdates test build",

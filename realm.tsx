@@ -41,7 +41,7 @@ export default createApp({
   getDesiredState: () => ({
     services: {
       api: {
-        image: "benjick/realmdo:latest",
+        image: "ghcr.io/yourrealm/realmdo:latest",
         router: {
           containerPort: 3000,
           // No tile: people use the realmdo page, the widget and the phone.

@@ -26,7 +26,7 @@ Realm.describe(realmdo, import.meta.resolve("./realm.tsx"), ({ test }) => {
     const result = await t.compile({ config, grants });
     assert(!result.error);
     const api = result.app.services.api!;
-    assertEquals(api.image, "benjick/realmdo:latest");
+    assertEquals(api.image, "ghcr.io/yourrealm/realmdo:latest");
     assertEquals(api.router!.containerPort, 3000);
     assertEquals(api.router!.rateLimit, { requests: 120, window: "10s" });
     assertEquals(api.volumes![0]!.backup, {
