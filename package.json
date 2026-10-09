@@ -22,7 +22,7 @@
     "macos:open": "open macos/build/Build/Products/Debug/realmdo.app"
   },
   "dependencies": {
-    "@yourrealm/sdk": "0.0.0-alpha.1443.45b20c0a"
+    "@yourrealm/sdk": "0.0.0-alpha.1451.8a8a7d44"
   },
   "devDependencies": {
     "@std/assert": "npm:@jsr/std__assert@^1",

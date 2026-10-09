@@ -49,6 +49,10 @@ export default createApp({
           // Tighter than the 1000/10s default: the bearer-token check on /api/
           // is the exposed surface, and a human on the UI never gets near this.
           rateLimit: { requests: 120, window: "10s" },
+          headers: {
+            "Content-Security-Policy":
+              "default-src 'self'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'",
+          },
         },
         volumes: [
           {

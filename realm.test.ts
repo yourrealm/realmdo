@@ -29,6 +29,11 @@ Realm.describe(realmdo, import.meta.resolve("./realm.tsx"), ({ test }) => {
     assertEquals(api.image, "ghcr.io/yourrealm/realmdo:latest");
     assertEquals(api.router!.containerPort, 3000);
     assertEquals(api.router!.rateLimit, { requests: 120, window: "10s" });
+    assert(
+      api.router!.headers!["Content-Security-Policy"]!.startsWith(
+        "default-src 'self'",
+      ),
+    );
     assertEquals(api.volumes![0]!.backup, {
       kind: "sqlite",
       file: "realmdo.db",

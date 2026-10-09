@@ -10,16 +10,16 @@ import {
   action,
   ArrowsClockwiseIcon,
   CheckBoldIcon,
-  type IconName,
   loader,
   PlusIcon,
   type Props,
   type SurfaceConfig,
+  type SurfaceIcon,
 } from "@yourrealm/sdk/ui";
 import { useState } from "@yourrealm/sdk/preact";
 
 export const title = "Tasks";
-export const icon: IconName = "ListChecksIcon";
+export const icon: SurfaceIcon = "ph:list-checks";
 export const cols = 2;
 export const rows = 2;
 

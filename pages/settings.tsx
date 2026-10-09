@@ -13,18 +13,18 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  type IconName,
   Input,
   Label,
   loader,
   Page,
   type Props,
   QrCode,
+  type SurfaceIcon,
 } from "@yourrealm/sdk/ui";
 import { useEffect, useState } from "@yourrealm/sdk/preact";
 
 export const title = "realmdo";
-export const icon: IconName = "CheckCircleIcon";
+export const icon: SurfaceIcon = "ph:check-circle";
 
 const token = z.object({
   id: z.number(),
