@@ -89,7 +89,8 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun done(task: Task) = mutate(task.id, { it.done(task.id, task.pendingSlot) })
+    fun done(task: Task) =
+        mutate({ afterDone(it, task, System.currentTimeMillis() / 1000) }, { it.done(task.id, task.pendingSlot) })
 
     /** Creates or saves a task; [onDone] gets the error, or null once it is saved. */
     fun save(draft: Draft, onDone: (String?) -> Unit) {
@@ -104,7 +105,8 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun delete(id: Long, title: String) = mutate(id, { it.delete(id) }, snack = "Deleted “$title”")
+    fun delete(id: Long, title: String) =
+        mutate({ tasks -> tasks.filter { it.id != id } }, { it.delete(id) }, snack = "Deleted “$title”")
 
     /**
      * Puts the tasks in this order. The list moves at once; the server's
@@ -215,21 +217,25 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         withContext(Dispatchers.IO) { TaskNotification.show(getApplication(), tasks) }
 
     /**
-     * Drops task [id] from the list at once, then calls the server. A quiet
-     * refresh brings back what the server still shows, such as a slot task's
-     * next slot, or the task itself on failure.
+     * Applies [change] to the list and the notification at once, then calls
+     * the server. A failure puts the old list back; either way a quiet
+     * refresh then brings in what the server shows.
      */
-    private fun mutate(id: Long, call: (Api) -> Unit, snack: String? = null) {
+    private fun mutate(change: (List<Task>) -> List<Task>, call: (Api) -> Unit, snack: String? = null) {
         val api = Api.from(prefs) ?: return
-        _state.update { s -> s.copy(tasks = s.tasks.filter { it.id != id }) }
+        val before = _state.value.tasks
+        val after = change(before)
+        _state.update { it.copy(tasks = after) }
         viewModelScope.launch {
+            notify(after)
             val result = withContext(Dispatchers.IO) { runCatching { call(api) } }
             _state.update { s ->
                 result.fold(
                     { s.copy(snack = snack ?: s.snack) },
-                    { e -> s.copy(error = e.message ?: "request failed") },
+                    { e -> s.copy(tasks = before, error = e.message ?: "request failed") },
                 )
             }
+            if (result.isFailure) notify(before)
             refresh(quiet = true)
         }
     }

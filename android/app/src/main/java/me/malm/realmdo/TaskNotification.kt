@@ -11,6 +11,8 @@ import android.os.VibrationEffect
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import org.json.JSONArray
+import java.io.File
 
 /**
  * The top task as one pinned notification: its title in the status-bar chip,
@@ -49,26 +51,39 @@ object TaskNotification {
         show(ctx, tasks)
     }
 
-    /** Post the top of an already fetched list, or clear when nothing is visible. */
-    fun show(ctx: Context, tasks: List<Task>) {
+    /**
+     * Post the top of an already fetched list, or clear when nothing is
+     * visible. [failed] says a "Done" did not go through, in place of the
+     * top task's standing. The list is kept for [lastShown].
+     */
+    fun show(ctx: Context, tasks: List<Task>, failed: Boolean = false) {
         if (!Prefs(ctx).liveUpdate) return cancel(ctx)
+        runCatching { cacheFile(ctx).writeText(JSONArray(tasks.map(Task::toJson)).toString()) }
         val visible = tasks.filter { it.urgency >= 0 }
         if (visible.isEmpty()) {
             NotificationManagerCompat.from(ctx).cancel(NOTIF_ID)
         } else {
-            post(ctx, visible)
+            post(ctx, visible, failed)
         }
         scheduleRefresh(ctx)
     }
+
+    /** The list [show] last had, or null when there is none. A "Done" tap may run in a fresh process. */
+    fun lastShown(ctx: Context): List<Task>? = runCatching {
+        val arr = JSONArray(cacheFile(ctx).readText())
+        (0 until arr.length()).map { Task.from(arr.getJSONObject(it)) }
+    }.getOrNull()
+
+    private fun cacheFile(ctx: Context) = File(ctx.noBackupFilesDir, "notification.json")
 
     /** How many tasks after the top one the expanded view lists. */
     private const val NEXT_SHOWN = 3
 
     /** [visible] is the list in the user's order, top first, hidden tasks already dropped. */
-    fun post(ctx: Context, visible: List<Task>) {
+    private fun post(ctx: Context, visible: List<Task>, failed: Boolean) {
         ensureChannel(ctx)
         val task = visible.first()
-        val standing = detail(task)
+        val standing = if (failed) "Not marked done. Tap Done to retry." else detail(task)
         val next = visible.drop(1).take(NEXT_SHOWN)
         val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(icon(task))
@@ -103,6 +118,7 @@ object TaskNotification {
 
     fun cancel(ctx: Context) {
         NotificationManagerCompat.from(ctx).cancel(NOTIF_ID)
+        cacheFile(ctx).delete()
         cancelRefresh(ctx)
     }
 

@@ -90,6 +90,19 @@ class TaskJsonTest {
     }
 
     @Test
+    fun toJsonRoundTrips() {
+        val t = Task(
+            id = 9, title = "Stretch", kind = "slot", dueOn = "2026-10-30", afterDays = 3, lastDoneAt = 1758000000,
+            urgency = -0.5, important = false, today = listOf("morning" to "done", "evening" to "upcoming"),
+            pendingSlot = "evening", notes = "Slowly\nboth sides", steps = listOf(Step("Frog", null, "Hips low.", 90)),
+            leadDays = 0, rampDays = 2, slots = listOf("morning", "evening"), createdAt = 1757000000,
+        )
+        assertEquals(t, Task.from(t.toJson()))
+        val bare = Task(1, "Plain", "once", null, null, null, 0.5, false, null, null, null)
+        assertEquals(bare, Task.from(bare.toJson()))
+    }
+
+    @Test
     fun noStepsIsNull() {
         val t = Task.from(
             JSONObject(

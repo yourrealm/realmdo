@@ -85,6 +85,25 @@ data class Task(
             createdAt = o.optLong("created_at"),
         )
     }
+
+    /** The inverse of [from], for the notification's cached list. */
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("title", title)
+        .put("kind", kind)
+        .put("due_on", dueOn ?: JSONObject.NULL)
+        .put("after_days", afterDays ?: JSONObject.NULL)
+        .put("last_done_at", lastDoneAt ?: JSONObject.NULL)
+        .put("urgency", urgency)
+        .put("important", important)
+        .put("today", today?.let { JSONArray(it.map { (s, state) -> JSONObject().put("slot", s).put("state", state) }) } ?: JSONObject.NULL)
+        .put("pending_slot", pendingSlot ?: JSONObject.NULL)
+        .put("notes", notes ?: JSONObject.NULL)
+        .put("steps", steps?.let { JSONArray(it.map(Step::toJson)) } ?: JSONObject.NULL)
+        .put("lead_days", leadDays ?: JSONObject.NULL)
+        .put("ramp_days", rampDays ?: JSONObject.NULL)
+        .put("slots", slots?.let { JSONArray(it) } ?: JSONObject.NULL)
+        .put("created_at", createdAt)
 }
 
 /** One row of the done history, as `GET /api/completions` returns it. */

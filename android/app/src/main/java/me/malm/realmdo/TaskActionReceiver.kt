@@ -35,9 +35,15 @@ class TaskActionReceiver : BroadcastReceiver() {
         if (id < 0) return
         val api = Api.from(Prefs(ctx)) ?: return
         TaskNotification.vibrateTick(ctx)
-        // A failure leaves the notification as is, so the tap can be retried.
+        // Move on at once, as the app does, then let the server settle it.
+        val before = TaskNotification.lastShown(ctx)
+        val task = before?.firstOrNull { it.id == id }
+        if (before != null && task != null) TaskNotification.show(ctx, afterDone(before, task, System.currentTimeMillis() / 1000))
         if (runCatching { api.done(id, intent.getStringExtra(TaskNotification.EXTRA_SLOT)) }.isSuccess) {
             TaskNotification.refresh(ctx)
+        } else if (before != null && task != null) {
+            // Put it back and say so, so the tap can be retried.
+            TaskNotification.show(ctx, before, failed = true)
         }
     }
 }
