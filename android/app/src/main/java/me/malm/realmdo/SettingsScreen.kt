@@ -6,6 +6,7 @@ import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -56,8 +58,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -126,7 +128,7 @@ fun SettingsScreen(vm: TasksViewModel, state: UiState, onBack: () -> Unit) {
             Group("Account") {
                 Column(Modifier.padding(vertical = 12.dp)) {
                     Text("Signed in as ${state.username}", style = MaterialTheme.typography.bodyLarge)
-                    runCatching { URI(state.baseUrl).host }.getOrNull()?.let {
+                    runCatching { URI(state.home).host }.getOrNull()?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -318,65 +320,60 @@ private fun BackgroundCard(status: BackgroundRefresh.Status) {
     }
 }
 
+/** Connect to a realm: its Home address, typed or scanned from Home's Phones page. */
 @Composable
 fun SetupScreen(vm: TasksViewModel, state: UiState) {
     val ctx = LocalContext.current
-    var url by rememberSaveable { mutableStateOf("https://") }
-    var token by rememberSaveable { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val connectWith = { u: String, t: String ->
-        busy = true
-        vm.connect(u, t) { err ->
-            busy = false
-            error = err
-        }
-    }
-    val connect = { connectWith(url, token) }
+    var address by rememberSaveable { mutableStateOf(state.home.removePrefix("https://")) }
+    val open = { url: String -> CustomTabsIntent.Builder().build().launchUrl(ctx, url.toUri()) }
     val scan = {
         val options = GmsBarcodeScannerOptions.Builder()
             .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
             .build()
         GmsBarcodeScanning.getClient(ctx, options).startScan()
-            .addOnSuccessListener { code ->
-                val pairing = Pairing.parse(code.rawValue)
-                if (pairing == null) error = "Not a realmdo pairing code."
-                else connectWith(pairing.baseUrl, pairing.token)
-            }
-            .addOnFailureListener { error = it.message ?: "scan failed" }
+            .addOnSuccessListener { code -> code.rawValue?.let { vm.connect(it, open) } }
     }
+    val connect = { vm.connect(address, open) }
     Scaffold { pad ->
         Column(
             Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             AppTitle()
-            Spacer(Modifier.height(24.dp))
-            ScreenTitle("Pair this phone", null)
-            Text(
-                "Create a token on the realmdo page in your Realm's Home, then scan its code or paste it here.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Spacer(Modifier.height(32.dp))
+            ScreenTitle("Connect to your realm", null)
+            OutlinedTextField(
+                value = address, onValueChange = { address = it },
+                label = { Text("Realm address") },
+                placeholder = { Text("home.example.eu") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { connect() }),
             )
-            Button(onClick = { scan() }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Scan QR code")
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Button(
+                onClick = connect,
+                enabled = !state.connecting && address.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text(if (state.connecting) "Connecting…" else "Continue", fontWeight = FontWeight.SemiBold) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+                Text(
+                    "or",
+                    Modifier.padding(horizontal = 12.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
             }
-            SectionLabel("Or by hand", Modifier.padding(top = 12.dp))
-            OutlinedTextField(
-                value = url, onValueChange = { url = it }, label = { Text("Server URL") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-            )
-            OutlinedTextField(
-                value = token, onValueChange = { token = it }, label = { Text("Token") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { connect() }),
-            )
-            (error ?: state.error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            OutlinedButton(onClick = connect, enabled = !busy && token.isNotBlank(), modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                Text(if (busy) "Connecting…" else "Connect")
+            OutlinedButton(
+                onClick = { scan() },
+                enabled = !state.connecting,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Icon(Glyph.Scan, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Scan a code", fontWeight = FontWeight.SemiBold)
             }
         }
     }

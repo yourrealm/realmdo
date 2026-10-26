@@ -7,6 +7,7 @@ lifecycle = "2.9.4"
 composeBom = "2025.09.01"
 coroutines = "1.10.2"
 codeScanner = "16.1.0"
+browser = "1.10.0"
 junit = "4.13.2"
 orgJson = "20240303"
 reorderable = "3.1.0"
@@ -23,6 +24,8 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 # Drag to reorder in lazy lists: the order screen and the routine editor.
 reorderable = { group = "sh.calvin.reorderable", name = "reorderable", version.ref = "reorderable" }
+# Custom Tabs for Home's consent page: the browser holds the Home session.
+androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 play-services-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "codeScanner" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 # The real org.json for JVM tests; android.jar only stubs it.

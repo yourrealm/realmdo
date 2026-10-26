@@ -45,13 +45,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- The pairing QR from the realmdo page in Home, so the phone's own
-                 camera app can pair too: realmdo://pair?url=...&token=... -->
+            <!-- Home's consent page sends the browser back here, to
+                 me.malm.realmdo:/callback. singleTask brings this activity
+                 back rather than stacking a second one. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="realmdo" android:host="pair" />
+                <data android:scheme="me.malm.realmdo" />
             </intent-filter>
         </activity>
 

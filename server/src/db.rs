@@ -16,16 +16,6 @@ pub struct User {
     pub has_public_url: bool,
 }
 
-/// A bearer token row. The token itself is never stored, only its hash.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Token {
-    pub id: i64,
-    pub name: String,
-    pub prefix: String,
-    pub created_at: i64,
-    pub last_used_at: Option<i64>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -189,6 +179,8 @@ const MIGRATIONS: &[&str] = &[
     UPDATE tasks SET position = id;",
     // v9: how many days before its due date a one-off shows up.
     "ALTER TABLE tasks ADD COLUMN lead_days INTEGER;",
+    // v10: Realm signs the phone in now, so realmdo's own bearer tokens go.
+    "DROP TABLE tokens;",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -304,109 +296,6 @@ pub fn user_by_public_secret_hash(conn: &Connection, hash: &str) -> rusqlite::Re
         user_row,
     )
     .optional()
-}
-
-// ---- tokens -----------------------------------------------------------------
-
-/// How stale `last_used_at` may get before a token use writes it again.
-const LAST_USED_GRANULARITY: i64 = 300;
-
-/// The user behind a token hash, touching `last_used_at` coarsely.
-pub fn user_by_token_hash(
-    conn: &Connection,
-    hash: &str,
-    now: i64,
-) -> rusqlite::Result<Option<User>> {
-    let row = conn
-        .query_row(
-            "SELECT t.id, t.last_used_at, u.id, u.username, u.timezone,
-                    u.morning_at, u.before_lunch_at, u.afternoon_at, u.evening_at,
-                    u.public_secret_hash IS NOT NULL
-             FROM tokens t JOIN users u ON u.id = t.user_id
-             WHERE t.hash = ?1",
-            params![hash],
-            |r| {
-                let token_id: i64 = r.get(0)?;
-                let last_used: Option<i64> = r.get(1)?;
-                let minutes = |i: usize| -> rusqlite::Result<u16> {
-                    let v: i64 = r.get(i)?;
-                    u16::try_from(v).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(i, Type::Integer, Box::new(e))
-                    })
-                };
-                let user = User {
-                    id: r.get(2)?,
-                    username: r.get(3)?,
-                    timezone: r.get(4)?,
-                    slot_times: SlotTimes {
-                        morning: minutes(5)?,
-                        before_lunch: minutes(6)?,
-                        afternoon: minutes(7)?,
-                        evening: minutes(8)?,
-                    },
-                    has_public_url: r.get(9)?,
-                };
-                Ok((token_id, last_used, user))
-            },
-        )
-        .optional()?;
-    let Some((token_id, last_used, user)) = row else {
-        return Ok(None);
-    };
-    if last_used.is_none_or(|t| now - t >= LAST_USED_GRANULARITY) {
-        conn.execute(
-            "UPDATE tokens SET last_used_at = ?2 WHERE id = ?1",
-            params![token_id, now],
-        )?;
-    }
-    Ok(Some(user))
-}
-
-const TOKEN_COLUMNS: &str = "id, name, prefix, created_at, last_used_at";
-
-fn token_row(r: &Row) -> rusqlite::Result<Token> {
-    Ok(Token {
-        id: r.get(0)?,
-        name: r.get(1)?,
-        prefix: r.get(2)?,
-        created_at: r.get(3)?,
-        last_used_at: r.get(4)?,
-    })
-}
-
-pub fn list_tokens(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<Token>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {TOKEN_COLUMNS} FROM tokens WHERE user_id = ?1 ORDER BY id"
-    ))?;
-    let rows = stmt.query_map(params![user_id], token_row)?;
-    rows.collect()
-}
-
-pub fn insert_token(
-    conn: &Connection,
-    user_id: i64,
-    name: &str,
-    prefix: &str,
-    hash: &str,
-    now: i64,
-) -> rusqlite::Result<Token> {
-    conn.query_row(
-        &format!(
-            "INSERT INTO tokens (user_id, name, prefix, hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5) RETURNING {TOKEN_COLUMNS}"
-        ),
-        params![user_id, name, prefix, hash, now],
-        token_row,
-    )
-}
-
-/// `true` when a row was deleted.
-pub fn delete_token(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result<bool> {
-    let n = conn.execute(
-        "DELETE FROM tokens WHERE id = ?1 AND user_id = ?2",
-        params![id, user_id],
-    )?;
-    Ok(n > 0)
 }
 
 // ---- tasks ------------------------------------------------------------------
@@ -1082,39 +971,5 @@ mod tests {
         assert_eq!(t.kind, Kind::Once);
         assert_eq!(t.last_done_at, Some(50));
         assert_eq!(upsert_user(&conn, "max", 2).unwrap().timezone, "UTC");
-    }
-
-    #[test]
-    fn tokens_resolve_to_their_user_and_can_be_revoked() {
-        let conn = memory();
-        let max = upsert_user(&conn, "max", 1).unwrap();
-        let eve = upsert_user(&conn, "eve", 1).unwrap();
-        let t = insert_token(&conn, max.id, "phone", "rdo_12345678", "h1", 10).unwrap();
-        assert_eq!(t.last_used_at, None);
-
-        let found = user_by_token_hash(&conn, "h1", 20).unwrap().unwrap();
-        assert_eq!(found.id, max.id);
-        assert_eq!(found.slot_times, SlotTimes::DEFAULT);
-        assert_eq!(
-            list_tokens(&conn, max.id).unwrap()[0].last_used_at,
-            Some(20)
-        );
-        // Within the granularity window the timestamp is left alone.
-        user_by_token_hash(&conn, "h1", 30).unwrap();
-        assert_eq!(
-            list_tokens(&conn, max.id).unwrap()[0].last_used_at,
-            Some(20)
-        );
-        user_by_token_hash(&conn, "h1", 20 + LAST_USED_GRANULARITY).unwrap();
-        assert_eq!(
-            list_tokens(&conn, max.id).unwrap()[0].last_used_at,
-            Some(20 + LAST_USED_GRANULARITY)
-        );
-
-        assert!(user_by_token_hash(&conn, "nope", 20).unwrap().is_none());
-        assert!(list_tokens(&conn, eve.id).unwrap().is_empty());
-        assert!(!delete_token(&conn, eve.id, t.id).unwrap());
-        assert!(delete_token(&conn, max.id, t.id).unwrap());
-        assert!(user_by_token_hash(&conn, "h1", 20).unwrap().is_none());
     }
 }

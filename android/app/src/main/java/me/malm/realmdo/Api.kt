@@ -130,16 +130,50 @@ data class Completion(
     }
 }
 
-class ApiException(val status: Int, message: String) : IOException(message)
+open class ApiException(val status: Int, message: String) : IOException(message)
+
+/** The realm ended the connection (a Disconnect, or the refresh token ran out); the tokens are gone. */
+class SignedOut : ApiException(401, "Disconnected from your realm. Connect again.")
 
 /**
- * The JSON API behind the gate, authenticated with a bearer token. Plain
+ * The stored tokens, refreshed under one lock: the activity, the alarm and
+ * the notification's Done share them, every refresh rotates, and a refresh
+ * token used again after 30 seconds disconnects the phone.
+ */
+object Session {
+    /** Refresh this long before the access token runs out. */
+    private const val MARGIN_MS = 60_000L
+
+    /**
+     * An access token worth sending, or null when signed out. [rejected] is
+     * one that just answered 401: refresh unless another caller already has.
+     */
+    fun access(prefs: Prefs, rejected: String? = null): String? = synchronized(this) {
+        val current = prefs.accessToken
+        if (!prefs.configured) return null
+        if (rejected != null && current != rejected) return current
+        if (rejected == null && prefs.accessExpires - System.currentTimeMillis() > MARGIN_MS) return current
+        when (val r = Auth.refresh(prefs.tokenEndpoint, prefs.clientId, prefs.refreshToken)) {
+            is Auth.Refreshed.Done -> {
+                prefs.saveTokens(r.tokens)
+                r.tokens.access
+            }
+            Auth.Refreshed.Disconnected -> {
+                prefs.dropTokens()
+                null
+            }
+            Auth.Refreshed.TryLater -> current
+        }
+    }
+}
+
+/**
+ * The JSON API behind the gate, as the user Realm signed in. Plain
  * `HttpURLConnection`, blocking: callers run it off the main thread.
  */
-class Api(private val baseUrl: String, private val token: String) {
+class Api(private val prefs: Prefs) {
     companion object {
-        fun from(prefs: Prefs): Api? =
-            if (prefs.configured) Api(prefs.baseUrl, prefs.token) else null
+        fun from(prefs: Prefs): Api? = if (prefs.configured) Api(prefs) else null
     }
 
     /** `GET /api/me`, the username. */
@@ -197,8 +231,24 @@ class Api(private val baseUrl: String, private val token: String) {
     private fun requestArray(method: String, path: String, body: JSONObject? = null): JSONArray =
         JSONArray(raw(method, path, body))
 
+    /** One refresh and one retry on Realm's 401; the tokens go only when the realm says the connection is gone. */
     private fun raw(method: String, path: String, body: JSONObject?): String {
-        val conn = URL(baseUrl + path).openConnection() as HttpURLConnection
+        val token = Session.access(prefs) ?: throw SignedOut()
+        try {
+            return send(token, method, path, body)
+        } catch (e: ApiException) {
+            if (e !is Rejected) throw e
+            val next = Session.access(prefs, rejected = token) ?: throw SignedOut()
+            if (next == token) throw e
+            return send(next, method, path, body)
+        }
+    }
+
+    /** Realm's own 401 for a token it does not accept, never the app's. */
+    private class Rejected(message: String) : ApiException(401, message)
+
+    private fun send(token: String, method: String, path: String, body: JSONObject?): String {
+        val conn = URL(prefs.baseUrl + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
             conn.connectTimeout = 5_000
@@ -214,7 +264,8 @@ class Api(private val baseUrl: String, private val token: String) {
             if (status >= 400) {
                 val err = conn.errorStream?.bufferedReader()?.readText().orEmpty()
                 val message = runCatching { JSONObject(err).getString("error") }.getOrDefault(err.ifBlank { "HTTP $status" })
-                throw ApiException(status, message)
+                val realm = status == 401 && conn.getHeaderField("WWW-Authenticate")?.contains("invalid_token") == true
+                throw if (realm) Rejected(message) else ApiException(status, message)
             }
             return conn.inputStream.bufferedReader().readText()
         } finally {

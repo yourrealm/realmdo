@@ -16,8 +16,8 @@ share one JSON API:
   (`pages/settings.tsx`). These describe the deployment and UI. They never run
   inside the container. Deno typechecks and formats them, and pnpm installs the
   SDK.
-- `android/`: a thin Kotlin/Compose client (minSdk 31) that talks to `/api/`
-  with a bearer token.
+- `android/`: a thin Kotlin/Compose client (minSdk 31) that signs in through the
+  realm's Home and talks to `/api/` as that user.
 
 There is no web UI anymore. Leftover `web/` and `dist/` directories are
 untracked build artefacts.
@@ -50,8 +50,8 @@ pnpm android:install
 Single tests:
 
 ```sh
-cargo test --manifest-path server/Cargo.toml tokens_authenticate_until_revoked   # by name substring
-cd android && ./gradlew testDebugUnitTest --tests 'me.malm.realmdo.PairingTest'
+cargo test --manifest-path server/Cargo.toml session_header_identifies_the_user   # by name substring
+cd android && ./gradlew testDebugUnitTest --tests 'me.malm.realmdo.AuthTest'
 ```
 
 CI (`.github/workflows/ci.yml`) runs three jobs that do not depend on each
@@ -61,26 +61,24 @@ image.
 
 ## Identity and auth (spans realm.tsx and server/src/api.rs)
 
-- **Home session**: the Realm gate injects `X-Realmdo-User: <username>`
+- **One identity**: the Realm gate injects `X-Realmdo-User: <username>`
   (`getTrustedHeaders` in realm.tsx) and strips any copy the client sent. The
-  server trusts this header and creates the user row the first time it sees it.
-  The header name in `api.rs` (`USER_HEADER`) must match realm.tsx.
-- **Bearer token** (`rdo_…`): minted on the settings page and stored only as a
-  SHA-256 hash (`token.rs`). The gate admits `/api/` on the _shape_ of an
-  `Authorization: Bearer` header alone, so the server does the real check.
+  server trusts this header on every request and creates the user row the first
+  time it sees it. The header name in `api.rs` (`USER_HEADER`) must match
+  realm.tsx.
+- **The phone** signs in through Realm's native clients: OAuth with PKCE against
+  Home, tokens `realm_at_…` and `realm_rt_…`. The gate checks the token, strips
+  it and injects the same header a browser gets, so the server never sees a
+  token. The flow is holden's `realm-ts/native-clients` docs page.
 - **Public URL** (`/public/pub_…/today`): a read-only secret URL for TRMNL,
-  hashed the same way.
-- Token and public-URL management needs a session, not a bearer token, so a
-  leaked device token cannot mint more tokens.
-- When both are present, the header wins over the token: it only exists when the
-  gate injected it for a Home session. On an anonymous admit the header is
-  absent, which Realm guarantees only since holden `d0c669ff` (2026-09-17). The
-  server does not guard against the older behaviour, so an older Realm cannot
-  host this app.
-- The gate in realm.tsx admits on request shape only: `/api/` with a bearer
-  header, `/public/` with its secret, and a Home session for everything else.
-  Never use `r.home.publicDomain()`. Keep `router.rateLimit` tight, since the
-  token check is the exposed surface.
+  stored only as a SHA-256 hash (`secret.rs`).
+- The gate in realm.tsx admits anonymously on shape only: `/public/` with its
+  secret. Everything else needs a signed-in user. On an anonymous admit the
+  header is absent, which Realm guarantees only since holden `d0c669ff`
+  (2026-09-17). Native clients need holden `70b184e5`. The server does not guard
+  against older behaviour, so an older Realm cannot host this app.
+- Never use `r.home.publicDomain()`. Keep `router.rateLimit` tight, since the
+  public-secret check is the exposed surface.
 - Widget and page loaders/actions must never declare headers. Identity always
   comes from the brokered header, and `realm.test.ts` asserts this.
 
@@ -98,8 +96,9 @@ image.
   its own schedule, and it would cost an egress grant, a stored key and a 2 KB
   payload cap.
 - **Android stays lean**: `HttpURLConnection` (which accepts PATCH) and
-  `org.json`, with no Room, Retrofit, WorkManager or navigation library. `App`
-  in `MainActivity.kt` picks one screen from state. Line icons are paths in
+  `org.json`, with no Room, Retrofit, WorkManager, AppAuth or navigation
+  library. `androidx.browser` is only there for the Custom Tab. `App` in
+  `MainActivity.kt` picks one screen from state. Line icons are paths in
   `Glyphs.kt`, not the extended icon library.
 
 ## Server model
@@ -130,15 +129,22 @@ image.
 
 ## Android
 
-- Package `me.malm.realmdo`. Pairing scans a `realmdo://pair?url=…&token=…` QR
-  code (from the settings page) with the Play services code scanner, so the app
-  needs no camera permission. `Prefs` stores the URL and token.
+- Package `me.malm.realmdo`. The connect screen takes Home's address, typed or
+  scanned from the QR on Home's Phones page with the Play services code scanner
+  (so no camera permission). It never accepts the companion's `realm://enroll`
+  code. `Auth` registers once per Home, opens the consent page in a Custom Tab,
+  and takes the redirect to `me.malm.realmdo:/callback` in `MainActivity`. The
+  token answer's `services.api` is the base URL.
+- `Prefs` holds the tokens, outside backups. `Session` refreshes them under one
+  lock, since every refresh rotates and a reused refresh token disconnects the
+  phone. `Api` refreshes and retries once on Realm's 401, and drops the tokens
+  only on `invalid_grant`.
 - A notification shows the top task and is promoted to a Live Update on API 36.
   It is kept fresh by an alarm chain (`TaskActionReceiver`, `BackgroundRefresh`)
   and re-posted after a reboot by `BootReceiver`.
 - JVM unit tests only. Anything that needs to be testable avoids `android.*`
-  APIs (for example, `Pairing` parses with `java.net.URI`, and tests use the
-  real `org.json`).
+  APIs (for example, `Auth` parses with `java.net.URI`, and tests use the real
+  `org.json`).
 
 ## Conventions
 

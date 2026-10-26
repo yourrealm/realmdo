@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The token never leaves the device: no cloud backup, no device transfer. -->
+<!-- The realm tokens never leave the device: no cloud backup, no device
+     transfer. A restored copy on another phone would be the same connection. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="realmdo.xml" />

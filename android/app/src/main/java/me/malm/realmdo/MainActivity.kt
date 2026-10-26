@@ -2,7 +2,6 @@ package me.malm.realmdo
 
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -42,12 +41,12 @@ class MainActivity : ComponentActivity() {
                 App(model)
             }
         }
-        pairFrom(intent)
+        signedIn(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        pairFrom(intent)
+        signedIn(intent)
     }
 
     override fun onResume() {
@@ -55,21 +54,19 @@ class MainActivity : ComponentActivity() {
         vm.resumed()
     }
 
-    /** A `realmdo://pair` link opened from the camera app or any scanner. */
-    private fun pairFrom(intent: Intent?) {
+    /** Home's consent page sending the browser back to [Auth.REDIRECT]. */
+    private fun signedIn(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
-        val pairing = Pairing.parse(intent.dataString) ?: return
+        val data = intent.dataString ?: return
         intent.data = null // once, not again on rotation
-        vm.connect(pairing.baseUrl, pairing.token) { err ->
-            Toast.makeText(this, err ?: "Paired as ${vm.state.value.username}", Toast.LENGTH_LONG).show()
-        }
+        vm.finishConnect(data)
     }
 }
 
 private enum class Tab(val label: String) { Today("Today"), Order("Order"), Done("Done") }
 
 /**
- * One screen at a time, most specific first: pairing, a running routine, the
+ * One screen at a time, most specific first: connecting, a running routine, the
  * routine editor, the task editor, settings, then the three tabs.
  */
 @Composable

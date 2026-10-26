@@ -1,8 +1,6 @@
-// realmdo's settings, as a page in Realm: pair a phone, feed TRMNL, set the
-// day. Home stamps X-Realmdo-User on every loader and action call, so the
-// backend sees a session and allows what it refuses a device token (minting
-// tokens and the public URL). The pairing QR and the TRMNL URL need the app's
-// own address, which Home hands the page as `services.api`.
+// realmdo's settings, as a page in Realm: feed TRMNL, set the day. Home stamps
+// X-Realmdo-User on every loader and action call. The TRMNL URL needs the
+// app's own address, which Home hands the page as `services.api`.
 
 import { z } from "@yourrealm/sdk";
 import {
@@ -18,21 +16,12 @@ import {
   loader,
   Page,
   type Props,
-  QrCode,
   type SurfaceIcon,
 } from "@yourrealm/sdk/ui";
 import { useEffect, useState } from "@yourrealm/sdk/preact";
 
 export const title = "realmdo";
 export const icon: SurfaceIcon = "ph:check-circle";
-
-const token = z.object({
-  id: z.number(),
-  name: z.string(),
-  prefix: z.string(),
-  created_at: z.number(),
-  last_used_at: z.number().nullable(),
-});
 
 const SLOTS = ["morning", "before_lunch", "afternoon", "evening"] as const;
 type Slot = (typeof SLOTS)[number];
@@ -57,11 +46,6 @@ type Settings = z.infer<typeof settings>;
 const api = { service: "api", port: 3000 } as const;
 
 export const loaders = {
-  tokens: loader({
-    ...api,
-    outputSchema: z.array(token),
-    request: () => ({ method: "GET" as const, path: "/api/tokens" }),
-  }),
   publicUrl: loader({
     ...api,
     outputSchema: z.object({ enabled: z.boolean() }),
@@ -75,24 +59,6 @@ export const loaders = {
 };
 
 export const actions = {
-  createToken: action({
-    ...api,
-    inputSchema: z.object({ name: z.string() }),
-    outputSchema: token.extend({ secret: z.string() }),
-    request: (input) => ({
-      method: "POST" as const,
-      path: "/api/tokens",
-      body: input,
-    }),
-  }),
-  revokeToken: action({
-    ...api,
-    inputSchema: z.object({ id: z.number() }),
-    request: (input) => ({
-      method: "DELETE" as const,
-      path: `/api/tokens/${input.id}`,
-    }),
-  }),
   mintPublicUrl: action({
     ...api,
     inputSchema: z.object({}),
@@ -122,10 +88,6 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function day(ts: number | null): string {
-  return ts ? new Date(ts * 1000).toLocaleDateString() : "never";
-}
-
 /**
  * A secret or URL to copy by hand: the iframe may not write the clipboard,
  * so the field selects all of itself on focus instead.
@@ -139,157 +101,6 @@ function Copyable({ value, label }: { value: string; label: string }) {
       onFocus={(e) => (e.currentTarget as HTMLInputElement).select()}
       className="font-mono text-xs"
     />
-  );
-}
-
-function Tokens({ loaders, actions, services }: Api) {
-  const [name, setName] = useState("");
-  const [minted, setMinted] = useState<{ name: string; secret: string } | null>(
-    null,
-  );
-  const [confirm, setConfirm] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const origin = services.api ?? null;
-
-  const create = async (e: Event) => {
-    e.preventDefault();
-    const n = name.trim();
-    if (!n) return;
-    setError(null);
-    try {
-      const t = await actions.createToken.mutateAsync({ name: n });
-      setMinted({ name: t.name, secret: t.secret });
-      setName("");
-      loaders.tokens.refetch();
-    } catch (err) {
-      setError(message(err));
-    }
-  };
-
-  const revoke = async (id: number) => {
-    setError(null);
-    try {
-      await actions.revokeToken.mutateAsync({ id });
-      setConfirm(null);
-      loaders.tokens.refetch();
-    } catch (err) {
-      setError(message(err));
-    }
-  };
-
-  const pair = minted && origin
-    ? `realmdo://pair?url=${encodeURIComponent(origin)}&token=${
-      encodeURIComponent(minted.secret)
-    }`
-    : null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Pair a device</CardTitle>
-        <CardDescription>
-          Each device gets its own token. Create one, then scan the code with
-          the realmdo app, or paste the token and URL into the Mac app. A token
-          is shown once; revoke it here if the device is lost.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <form className="flex gap-2" onSubmit={create}>
-          <Input
-            placeholder="Name: phone, Mac, TRMNL, script"
-            aria-label="Token name"
-            value={name}
-            onValueChange={setName}
-          />
-          <Button
-            type="submit"
-            disabled={!name.trim() || actions.createToken.isPending}
-          >
-            Create
-          </Button>
-        </form>
-
-        {minted && (
-          <div className="flex flex-col gap-4 rounded-xl border border-border p-4 sm:flex-row sm:items-center">
-            {pair && <QrCode value={pair} size={176} />}
-            <div className="min-w-0 flex-1 space-y-2 text-sm">
-              <p>
-                Token for <b>{minted.name}</b>. {pair
-                  ? "Scan the code with the realmdo app, or copy the token and paste it there with this app's address."
-                  : "This app has no address yet, so there is no code to scan. Copy the token now."}
-                {" "}
-                It will not be shown again.
-              </p>
-              <Copyable value={minted.secret} label="New token" />
-              {origin && <Copyable value={origin} label="Server URL" />}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setMinted(null)}
-              >
-                Done
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        {loaders.tokens.error && (
-          <p className="text-sm text-destructive">
-            {loaders.tokens.error.message}
-          </p>
-        )}
-        {loaders.tokens.data && loaders.tokens.data.length === 0 && (
-          <p className="text-sm text-muted-foreground">No tokens yet.</p>
-        )}
-        {loaders.tokens.data && loaders.tokens.data.length > 0 && (
-          <ul className="divide-y divide-border">
-            {loaders.tokens.data.map((t) => (
-              <li key={t.id} className="flex items-center gap-3 py-2 text-sm">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{t.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {t.prefix}… · created {day(t.created_at)} · last used{" "}
-                    {day(t.last_used_at)}
-                  </p>
-                </div>
-                {confirm === t.id
-                  ? (
-                    <>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={actions.revokeToken.isPending}
-                        onClick={() => revoke(t.id)}
-                      >
-                        Revoke {t.name}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          setConfirm(null)}
-                      >
-                        Keep
-                      </Button>
-                    </>
-                  )
-                  : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setConfirm(t.id)}
-                    >
-                      Revoke
-                    </Button>
-                  )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -460,10 +271,9 @@ function Day({ loaders, actions }: Api) {
 export default ((props) => (
   <Page
     title="Settings"
-    subtitle="Pair a device, feed TRMNL and set your day."
+    subtitle="Feed TRMNL and set your day."
   >
     <div className="mx-auto max-w-3xl space-y-6 p-6">
-      <Tokens {...props} />
       <PublicUrl {...props} />
       <Day {...props} />
     </div>

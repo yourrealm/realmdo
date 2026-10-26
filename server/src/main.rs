@@ -8,8 +8,8 @@ mod clock;
 mod date;
 mod db;
 mod healthcheck;
+mod secret;
 mod slots;
-mod token;
 mod urgency;
 
 use std::net::SocketAddr;

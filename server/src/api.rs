@@ -1,20 +1,15 @@
 //! JSON API under /api/.
 //!
-//! Identity, in order of precedence:
-//! 1. `X-Realmdo-User`, the header the gate injects for a Home session (and
-//!    strips from every client). Only Caddy and Home's widget-loader proxy
-//!    can reach the container, and neither lets a client choose it.
-//! 2. `Authorization: Bearer rdo_...`, a per-user token minted under
-//!    Settings. The gate admits `/api/` when a bearer is present; the token
-//!    is checked here.
-//!
-//! Token management needs (1): a leaked device token cannot mint more tokens.
+//! Identity is `X-Realmdo-User`, which the gate injects for a Home session or
+//! a Realm native-client token (and strips from every client). Only Caddy and
+//! Home's widget-loader proxy can reach the container, and neither lets a
+//! client choose it.
 //!
 //! Every "today" and "now" is the user's local time (their time zone setting).
 
 use crate::slots::{Slot, SlotTimes, format_hhmm, parse_hhmm};
 use crate::urgency::SlotState;
-use crate::{clock, date, db, token, urgency};
+use crate::{clock, date, db, secret, urgency};
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
@@ -34,7 +29,6 @@ const USER_HEADER: &str = "x-realmdo-user";
 const MAX_USERNAME: usize = 64;
 const MAX_TITLE: usize = 500;
 const MAX_NOTES: usize = 4000;
-const MAX_TOKEN_NAME: usize = 64;
 const MAX_STEPS: usize = 50;
 const MAX_STEP_TITLE: usize = 200;
 const MAX_STEP_SPEECH: usize = 500;
@@ -113,15 +107,12 @@ pub fn router(state: AppState) -> Router {
                 .delete(disable_public_url),
         )
         .route("/public/{secret}/today", get(public_today))
-        .route("/api/tokens", get(list_tokens).post(create_token))
-        .route("/api/tokens/{id}", delete(delete_token))
         .fallback(|| async { ApiError::NotFound })
         .with_state(state)
 }
 
 enum ApiError {
     Unauthorized,
-    Forbidden(&'static str),
     NotFound,
     BadRequest(String),
     Internal(String),
@@ -141,7 +132,6 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "sign in required".to_string()),
-            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             ApiError::Internal(m) => {
@@ -175,17 +165,9 @@ where
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Via {
-    Session,
-    Token,
-}
-
-/// The calling user, created on first sight for a session.
+/// The calling user, created on first sight.
 struct Identity {
     user: db::User,
-    via: Via,
 }
 
 impl FromRequestParts<AppState> for Identity {
@@ -193,56 +175,18 @@ impl FromRequestParts<AppState> for Identity {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let now = state.now();
-        let header = parts
+        let username = parts
             .headers
             .get(USER_HEADER)
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
             .filter(|s| !s.is_empty() && s.len() <= MAX_USERNAME)
-            .map(str::to_string);
-        if let Some(username) = header {
-            let user = state
-                .db(move |c| db::upsert_user(c, &username, now))
-                .await?;
-            return Ok(Identity {
-                user,
-                via: Via::Session,
-            });
-        }
-        let bearer = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
+            .map(str::to_string)
             .ok_or(ApiError::Unauthorized)?;
-        let hash = token::hash(bearer);
         let user = state
-            .db(move |c| db::user_by_token_hash(c, &hash, now))
-            .await?
-            .ok_or(ApiError::Unauthorized)?;
-        Ok(Identity {
-            user,
-            via: Via::Token,
-        })
-    }
-}
-
-/// An identity that arrived through a Home session, for token management.
-struct Session(db::User);
-
-impl FromRequestParts<AppState> for Session {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let id = Identity::from_request_parts(parts, state).await?;
-        match id.via {
-            Via::Session => Ok(Session(id.user)),
-            Via::Token => Err(ApiError::Forbidden(
-                "token management needs a browser session",
-            )),
-        }
+            .db(move |c| db::upsert_user(c, &username, now))
+            .await?;
+        Ok(Identity { user })
     }
 }
 
@@ -352,13 +296,11 @@ fn view(task: db::Task, ctx: &Ctx) -> TaskView {
 #[derive(Serialize)]
 struct Me {
     username: String,
-    via: Via,
 }
 
 async fn me(id: Identity) -> Json<Me> {
     Json(Me {
         username: id.user.username,
-        via: id.via,
     })
 }
 
@@ -908,9 +850,9 @@ struct PublicUrlStatus {
     enabled: bool,
 }
 
-async fn public_url_status(Session(user): Session) -> Json<PublicUrlStatus> {
+async fn public_url_status(id: Identity) -> Json<PublicUrlStatus> {
     Json(PublicUrlStatus {
-        enabled: user.has_public_url,
+        enabled: id.user.has_public_url,
     })
 }
 
@@ -922,13 +864,13 @@ struct MintedPublicUrl {
 
 async fn mint_public_url(
     State(state): State<AppState>,
-    Session(user): Session,
+    id: Identity,
 ) -> Result<(StatusCode, Json<MintedPublicUrl>), ApiError> {
-    let secret = token::generate_with_prefix(token::PUBLIC_PREFIX)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let hash = token::hash(&secret);
+    let secret = secret::generate().map_err(|e| ApiError::Internal(e.to_string()))?;
+    let hash = secret::hash(&secret);
+    let user_id = id.user.id;
     state
-        .db(move |c| db::set_public_secret_hash(c, user.id, Some(&hash)))
+        .db(move |c| db::set_public_secret_hash(c, user_id, Some(&hash)))
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -940,10 +882,11 @@ async fn mint_public_url(
 
 async fn disable_public_url(
     State(state): State<AppState>,
-    Session(user): Session,
+    id: Identity,
 ) -> Result<StatusCode, ApiError> {
+    let user_id = id.user.id;
     state
-        .db(move |c| db::set_public_secret_hash(c, user.id, None))
+        .db(move |c| db::set_public_secret_hash(c, user_id, None))
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -962,7 +905,7 @@ async fn public_today(
     State(state): State<AppState>,
     Path(secret): Path<String>,
 ) -> Result<Json<PublicToday>, ApiError> {
-    let hash = token::hash(&secret);
+    let hash = secret::hash(&secret);
     let user = state
         .db(move |c| db::user_by_public_secret_hash(c, &hash))
         .await?
@@ -988,64 +931,6 @@ async fn public_today(
         username: ctx.user.username.clone(),
         tasks: views,
     }))
-}
-
-// ---- tokens -----------------------------------------------------------------
-
-async fn list_tokens(
-    State(state): State<AppState>,
-    Session(user): Session,
-) -> Result<Json<Vec<db::Token>>, ApiError> {
-    Ok(Json(state.db(move |c| db::list_tokens(c, user.id)).await?))
-}
-
-#[derive(Deserialize)]
-struct NewToken {
-    name: String,
-}
-
-/// The token itself, returned exactly once.
-#[derive(Serialize)]
-struct MintedToken {
-    #[serde(flatten)]
-    token: db::Token,
-    secret: String,
-}
-
-async fn create_token(
-    State(state): State<AppState>,
-    Session(user): Session,
-    ApiJson(body): ApiJson<NewToken>,
-) -> Result<(StatusCode, Json<MintedToken>), ApiError> {
-    let name = body.name.trim().to_string();
-    if name.is_empty() || name.chars().count() > MAX_TOKEN_NAME {
-        return Err(ApiError::BadRequest(format!(
-            "name must be 1 to {MAX_TOKEN_NAME} characters"
-        )));
-    }
-    let secret = token::generate().map_err(|e| ApiError::Internal(e.to_string()))?;
-    let prefix = token::display_prefix(&secret);
-    let hash = token::hash(&secret);
-    let now = state.now();
-    let token = state
-        .db(move |c| db::insert_token(c, user.id, &name, &prefix, &hash, now))
-        .await?;
-    Ok((StatusCode::CREATED, Json(MintedToken { token, secret })))
-}
-
-async fn delete_token(
-    State(state): State<AppState>,
-    Session(user): Session,
-    Path(token_id): Path<i64>,
-) -> Result<StatusCode, ApiError> {
-    if state
-        .db(move |c| db::delete_token(c, user.id, token_id))
-        .await?
-    {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound)
-    }
 }
 
 #[cfg(test)]
@@ -1113,38 +998,10 @@ mod tests {
         .await
     }
 
-    async fn mint(app: &Router, user: (&str, &str), name: &str) -> (i64, String) {
-        let (status, body) = call(
-            app,
-            request(
-                Method::POST,
-                "/api/tokens",
-                &[user],
-                Some(json!({ "name": name })),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED, "{body}");
-        let secret = body["secret"].as_str().unwrap().to_string();
-        assert!(secret.starts_with("rdo_"));
-        (body["id"].as_i64().unwrap(), secret)
-    }
-
     #[tokio::test]
     async fn no_credentials_is_401() {
         let app = app();
         let (status, _) = call(&app, request(Method::GET, "/api/me", &[], None)).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        let (status, _) = call(
-            &app,
-            request(
-                Method::GET,
-                "/api/me",
-                &[("Authorization", "Bearer rdo_nope")],
-                None,
-            ),
-        )
-        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -1153,88 +1010,7 @@ mod tests {
         let app = app();
         let (status, body) = call(&app, request(Method::GET, "/api/me", &[MAX], None)).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, json!({ "username": "max", "via": "session" }));
-    }
-
-    #[tokio::test]
-    async fn tokens_authenticate_until_revoked() {
-        let app = app();
-        let (id, secret) = mint(&app, MAX, "phone").await;
-        let bearer = format!("Bearer {secret}");
-        let auth: (&str, &str) = ("Authorization", &bearer);
-
-        let (status, body) = call(&app, request(Method::GET, "/api/me", &[auth], None)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, json!({ "username": "max", "via": "token" }));
-
-        // The list never carries the secret.
-        let (status, body) = call(&app, request(Method::GET, "/api/tokens", &[MAX], None)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body[0]["name"], "phone");
-        assert_eq!(body[0]["prefix"], secret[..12]);
-        assert!(body[0].get("secret").is_none());
-
-        let (status, _) = call(
-            &app,
-            request(Method::DELETE, &format!("/api/tokens/{id}"), &[MAX], None),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
-        let (status, _) = call(&app, request(Method::GET, "/api/me", &[auth], None)).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn the_session_header_wins_over_a_bearer() {
-        let app = app();
-        let (_, eves) = mint(&app, ("X-Realmdo-User", "eve"), "laptop").await;
-        let bearer = format!("Bearer {eves}");
-        let (status, body) = call(
-            &app,
-            request(
-                Method::GET,
-                "/api/me",
-                &[MAX, ("Authorization", &bearer)],
-                None,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["username"], "max");
-        assert_eq!(body["via"], "session");
-    }
-
-    #[tokio::test]
-    async fn a_token_cannot_manage_tokens() {
-        let app = app();
-        let (id, secret) = mint(&app, MAX, "phone").await;
-        let bearer = format!("Bearer {secret}");
-        let auth: (&str, &str) = ("Authorization", &bearer);
-        for req in [
-            request(Method::GET, "/api/tokens", &[auth], None),
-            request(
-                Method::POST,
-                "/api/tokens",
-                &[auth],
-                Some(json!({ "name": "more" })),
-            ),
-            request(Method::DELETE, &format!("/api/tokens/{id}"), &[auth], None),
-        ] {
-            let (status, _) = call(&app, req).await;
-            assert_eq!(status, StatusCode::FORBIDDEN);
-        }
-        // But it can do real work.
-        let (status, _) = call(
-            &app,
-            request(
-                Method::POST,
-                "/api/tasks",
-                &[auth],
-                Some(json!({ "title": "from phone" })),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body, json!({ "username": "max" }));
     }
 
     #[tokio::test]
@@ -1598,21 +1374,6 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        // Minting needs a session, like token management.
-        let (_, secret) = mint(&app, MAX, "phone").await;
-        let bearer = format!("Bearer {secret}");
-        let (status, _) = call(
-            &app,
-            request(
-                Method::POST,
-                "/api/public-url",
-                &[("Authorization", &bearer)],
-                None,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-
         let (status, body) =
             call(&app, request(Method::GET, "/api/public-url", &[MAX], None)).await;
         assert_eq!(status, StatusCode::OK);
@@ -1689,23 +1450,6 @@ mod tests {
         assert_eq!(body[0]["title"], "oops", "back in the list");
         let (_, body) = call(&app, request(Method::GET, "/api/completions", &[MAX], None)).await;
         assert_eq!(body, json!([]));
-    }
-
-    #[tokio::test]
-    async fn tokens_are_per_user() {
-        let app = app();
-        let (id, _) = mint(&app, MAX, "phone").await;
-        let (status, _) = call(
-            &app,
-            request(
-                Method::DELETE,
-                &format!("/api/tokens/{id}"),
-                &[("X-Realmdo-User", "eve")],
-                None,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     fn titles(body: &Value) -> Vec<&str> {
@@ -1808,20 +1552,5 @@ mod tests {
             assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {body}");
             assert!(body["error"].is_string());
         }
-
-        // A device token may reorder: it is everyday use, not account admin.
-        let (_, secret) = mint(&app, MAX, "phone").await;
-        let bearer = format!("Bearer {secret}");
-        let (status, _) = call(
-            &app,
-            request(
-                Method::PUT,
-                "/api/tasks/order",
-                &[("Authorization", &bearer)],
-                Some(json!({ "ids": [mine] })),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
     }
 }

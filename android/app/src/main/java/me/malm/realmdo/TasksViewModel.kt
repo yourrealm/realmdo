@@ -1,6 +1,7 @@
 package me.malm.realmdo
 
 import android.app.Application
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +22,10 @@ private val DEFAULT_SLOT_TIMES = mapOf(
 data class UiState(
     val configured: Boolean = false,
     val username: String = "",
-    val baseUrl: String = "",
+    /** Home's origin: the realm this phone signs in to. */
+    val home: String = "",
+    /** Finding Home or trading the browser's code for tokens; not while the browser is open. */
+    val connecting: Boolean = false,
     /** Every open task, in the user's order. */
     val tasks: List<Task> = emptyList(),
     val loading: Boolean = false,
@@ -46,7 +50,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         UiState(
             configured = prefs.configured,
             username = prefs.username,
-            baseUrl = prefs.baseUrl,
+            home = prefs.home,
             liveUpdate = prefs.liveUpdate,
         ),
     )
@@ -61,7 +65,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
 
     /** A [quiet] refresh shows no spinner; it follows the user's own changes. */
     fun refresh(quiet: Boolean = false) {
-        val api = Api.from(prefs) ?: return
+        val api = Api.from(prefs) ?: return disconnected()
         if (!quiet) _state.update { it.copy(loading = true) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { api.tasks() } }
@@ -84,6 +88,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                     { s.copy(loading = false, error = it.message ?: "request failed") },
                 )
             }
+            if (!prefs.configured) return@launch disconnected()
             // The same list feeds the notification; no second fetch.
             result.onSuccess { tasks -> notify(tasks) }
         }
@@ -181,29 +186,87 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
 
     fun snackShown() = _state.update { it.copy(snack = null) }
 
-    /** Checks the connection, then stores it. */
-    fun connect(baseUrl: String, token: String, onDone: (String?) -> Unit) {
-        val api = Api(baseUrl.trimEnd('/'), token.trim())
+    /**
+     * Step one of connecting: find Home at what the user typed or scanned,
+     * register once, then [open] its consent page in the browser.
+     */
+    fun connect(raw: String, open: (String) -> Unit) {
+        if (raw.trim().startsWith("realm:")) {
+            return _state.update { it.copy(error = "That is the companion app's code. Scan the address on Home's Phones page.") }
+        }
+        val home = Auth.home(raw) ?: return _state.update { it.copy(error = "Not a realm address.") }
+        _state.update { it.copy(connecting = true, error = null, home = home) }
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { api.me() } }
-            result.fold(
-                { name ->
-                    prefs.baseUrl = baseUrl
-                    prefs.token = token
-                    prefs.username = name
-                    _state.update { it.copy(configured = true, username = name, baseUrl = prefs.baseUrl, error = null) }
-                    onDone(null)
-                    refresh()
-                },
-                { onDone(it.message ?: "request failed") },
-            )
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val endpoints = Auth.discover(home)
+                    val clientId = prefs.clientId.takeIf { prefs.home == home && it.isNotEmpty() }
+                        ?: Auth.register(endpoints.registration)
+                    val verifier = Auth.verifier()
+                    val state = Auth.verifier()
+                    prefs.startConnect(home, clientId, endpoints, verifier, state)
+                    Auth.authorizeUrl(endpoints.authorization, clientId, state, Auth.challenge(verifier), Build.MODEL)
+                }
+            }
+            _state.update { it.copy(connecting = false, error = result.exceptionOrNull()?.let { e -> e.message ?: "Home did not answer." }) }
+            result.onSuccess(open)
         }
     }
 
+    /** Step two: the browser came back to [Auth.REDIRECT]. Trade the code for tokens. */
+    fun finishConnect(redirect: String) {
+        val verifier = prefs.pendingVerifier
+        val back = Auth.redirect(redirect, prefs.pendingState) ?: return
+        prefs.endConnect()
+        when (back) {
+            is Auth.Redirect.Failed -> {
+                // Anything but a cancel may be a client this Home forgot; register again next time.
+                if (back.error != "access_denied") prefs.forgetClient()
+                _state.update { it.copy(error = if (back.error == "access_denied") "Not connected." else back.error) }
+            }
+            is Auth.Redirect.Code -> {
+                _state.update { it.copy(connecting = true, error = null) }
+                viewModelScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            prefs.saveTokens(Auth.exchange(prefs.tokenEndpoint, prefs.clientId, back.code, verifier))
+                            Api(prefs).me()
+                        }
+                    }
+                    result.fold(
+                        { name ->
+                            prefs.username = name
+                            _state.update { it.copy(configured = true, connecting = false, username = name, error = null) }
+                            refresh()
+                        },
+                        { e ->
+                            prefs.dropTokens()
+                            _state.update { it.copy(connecting = false, error = e.message ?: "request failed") }
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    /** Signs out at Home too, so the phone leaves its Phones page. */
     fun signOut() {
+        val endpoint = prefs.revocationEndpoint
+        val clientId = prefs.clientId
+        val refreshToken = prefs.refreshToken
         prefs.clear()
         TaskNotification.cancel(getApplication())
-        _state.value = UiState()
+        _state.value = UiState(home = prefs.home)
+        if (refreshToken.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) { runCatching { Auth.revoke(endpoint, clientId, refreshToken) } }
+        }
+    }
+
+    /** The realm ended the connection while the app was away; back to the connect screen. */
+    private fun disconnected() {
+        if (!_state.value.configured) return
+        TaskNotification.cancel(getApplication())
+        _state.value = UiState(home = prefs.home, liveUpdate = prefs.liveUpdate, error = "Disconnected from your realm. Connect again.")
     }
 
     fun setLiveUpdate(on: Boolean) {

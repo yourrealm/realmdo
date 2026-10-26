@@ -38,6 +38,7 @@ object Glyph {
     val Back = stroke("back", "M19 12H5M11 6l-6 6 6 6")
     val ChevronDown = stroke("chevron-down", "M6 9l6 6 6-6")
     val ChevronUp = stroke("chevron-up", "M6 15l6-6 6 6")
+    val Scan = stroke("scan", "M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M8 12h8")
     val ChevronRight = stroke("chevron-right", "M9 6l6 6-6 6")
     val Copy = stroke(
         "copy",

@@ -1,12 +1,11 @@
 // realmdo: a per-user todo app. One container: the Rust JSON API.
 //
 // Identity. The gate injects X-Realmdo-User on every request that carries a
-// Home session, and strips any copy the client sent. The backend trusts that
-// header and creates its local user row on first sight. Machine callers are
-// admitted on shape alone (/api/ with a bearer header, /public/ with a secret
-// in the URL); the backend verifies the credential, because the gate cannot
-// (it sees only method, URL and headers). Everything else needs a Home
-// session.
+// Home session or a Realm native-client token (the Android app), and strips
+// any copy the client sent. The backend trusts that header and creates its
+// local user row on first sight. TRMNL is admitted on shape alone (/public/
+// with a secret in the URL); the backend checks the secret, because the gate
+// cannot. Everything else needs a signed-in user.
 
 import { createApp } from "@yourrealm/sdk";
 
@@ -20,23 +19,8 @@ export default createApp({
     "X-Realmdo-User": user.username,
   }),
 
-  verifyAnonymousRequest: (request) => {
-    const { pathname } = new URL(request.url);
-    if (pathname.startsWith("/api/")) {
-      return request.headers.get("Authorization")?.startsWith("Bearer ") ??
-        false;
-    }
-    return pathname.startsWith("/public/");
-  },
-
-  info: ({ services }) => ({
-    apiUrl: {
-      label: "API base URL",
-      value: services.api ? `${services.api}/api` : null,
-      description:
-        "Create a token on realmdo's Settings page and send it as Authorization: Bearer <token>.",
-    },
-  }),
+  verifyAnonymousRequest: (request) =>
+    new URL(request.url).pathname.startsWith("/public/"),
 
   getDesiredState: () => ({
     services: {
@@ -46,9 +30,9 @@ export default createApp({
           containerPort: 3000,
           // No tile: people use the realmdo page, the widget and the phone.
           tile: false,
-          // Tighter than the 1000/10s default: the bearer-token check on /api/
-          // is the exposed surface, and a human on the UI never gets near this.
-          rateLimit: { requests: 120, window: "10s" },
+          // Tighter than the 1000/10s default: the /public/ secret check is
+          // the exposed surface, and a human never gets near this.
+          rateLimit: { requests: 300, window: "10s" },
           headers: {
             "Content-Security-Policy":
               "default-src 'self'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'",

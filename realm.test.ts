@@ -28,7 +28,7 @@ Realm.describe(realmdo, import.meta.resolve("./realm.tsx"), ({ test }) => {
     const api = result.app.services.api!;
     assertEquals(api.image, "ghcr.io/yourrealm/realmdo:latest");
     assertEquals(api.router!.containerPort, 3000);
-    assertEquals(api.router!.rateLimit, { requests: 120, window: "10s" });
+    assertEquals(api.router!.rateLimit, { requests: 300, window: "10s" });
     assert(
       api.router!.headers!["Content-Security-Policy"]!.startsWith(
         "default-src 'self'",
@@ -71,17 +71,14 @@ Realm.describe(realmdo, import.meta.resolve("./realm.tsx"), ({ test }) => {
     assertEquals(Object.keys(page.loaders!).sort(), [
       "publicUrl",
       "settings",
-      "tokens",
     ]);
     assertEquals(Object.keys(page.actions!).sort(), [
-      "createToken",
       "disablePublicUrl",
       "mintPublicUrl",
-      "revokeToken",
       "saveSettings",
     ]);
-    // Minting needs a session, which is what the brokered header is; a page
-    // must never declare it (see the widget test above).
+    // Identity is the brokered header; a page must never declare it (see the
+    // widget test above).
     for (
       const call of [
         ...Object.values(page.loaders!),
@@ -96,6 +93,19 @@ Realm.describe(realmdo, import.meta.resolve("./realm.tsx"), ({ test }) => {
 
 // The harness's compile result carries services and trusted headers, not the
 // gate flag, so read it straight off evaluate() as the SDK's own tests do.
-Deno.test("declares an anonymous gate (for /api/ and /public/)", () => {
+Deno.test("declares an anonymous gate", () => {
   assertEquals(realmdo.evaluate({ config }).hasAnonymousGate, true);
+});
+
+Deno.test("the anonymous gate admits /public/ only", () => {
+  const admits = (path: string, headers: HeadersInit = {}) =>
+    realmdo.verifyAnonymousRequest!(
+      new Request(`https://realmdo.example${path}`, { headers }),
+      () => "",
+    );
+  assertEquals(admits("/public/pub_abc/today"), true);
+  // The phone signs in through Realm now, so a bearer alone is not enough.
+  assertEquals(admits("/api/tasks", { Authorization: "Bearer rdo_x" }), false);
+  assertEquals(admits("/api/tasks"), false);
+  assertEquals(admits("/"), false);
 });
