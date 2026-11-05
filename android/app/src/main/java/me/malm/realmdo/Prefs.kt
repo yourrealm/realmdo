@@ -88,6 +88,7 @@ class Prefs(context: Context) {
         remove("access_expires")
         remove("base_url")
         remove("username")
+        remove("token") // realmdo's own token, from before Realm signed the phone in
     }
 
     /** Everything but Home and its client registration, so connecting again skips registering. */

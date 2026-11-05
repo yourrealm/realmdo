@@ -7,8 +7,9 @@ import kotlin.concurrent.thread
 
 /**
  * Background work for the notification: "Done" taps and the refresh alarm.
- * Each does one short round of HTTP inside `goAsync()`, whose budget (about
- * ten seconds) the 5 s API timeouts fit under.
+ * Each does one round of HTTP inside `goAsync()`. These are background
+ * broadcasts, with about a minute: room for a token refresh retried inside
+ * Home's 30 s replay window plus the 5 s API calls.
  */
 class TaskActionReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {

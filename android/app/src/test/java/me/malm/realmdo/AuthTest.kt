@@ -79,8 +79,46 @@ class AuthTest {
         val ok = """{"access_token":"a","refresh_token":"r","expires_in":900,"services":{"api":"https://x"}}"""
         assertTrue(Auth.refreshed(200, ok, 0) is Auth.Refreshed.Done)
         assertEquals(Auth.Refreshed.Disconnected, Auth.refreshed(400, """{"error":"invalid_grant"}""", 0))
-        assertEquals(Auth.Refreshed.TryLater, Auth.refreshed(400, """{"error":"access_denied"}""", 0))
-        assertEquals(Auth.Refreshed.TryLater, Auth.refreshed(503, """{"error":"temporarily_unavailable"}""", 0))
-        assertEquals(Auth.Refreshed.TryLater, Auth.refreshed(502, "<html>", 0))
+        assertTrue(Auth.refreshed(400, """{"error":"access_denied"}""", 0) is Auth.Refreshed.TryLater)
+        assertTrue(Auth.refreshed(503, """{"error":"temporarily_unavailable"}""", 0) is Auth.Refreshed.TryLater)
+        assertTrue(Auth.refreshed(502, "<html>", 0) is Auth.Refreshed.TryLater)
+    }
+
+    /** A clock that moves only when the code under test pauses or sends. */
+    private class Clock(var ms: Long = 0)
+
+    @Test
+    fun aLostAnswerIsSentAgainWithTheSameToken() {
+        val clock = Clock()
+        var sends = 0
+        val ok = """{"access_token":"a","refresh_token":"r","expires_in":900,"services":{"api":"https://x"}}"""
+        val r = Auth.refreshing({ clock.ms }, { clock.ms += it }) {
+            sends++
+            clock.ms += 5_000
+            if (sends < 3) throw java.net.SocketTimeoutException("read timed out") else 200 to ok
+        }
+        assertTrue(r is Auth.Refreshed.Done)
+        assertEquals(3, sends)
+    }
+
+    @Test
+    fun retriesStopBeforeHomeStopsReplaying() {
+        val clock = Clock()
+        var lastStart = 0L
+        val r = Auth.refreshing({ clock.ms }, { clock.ms += it }) {
+            lastStart = clock.ms
+            clock.ms += 10_000
+            throw java.io.IOException("connection reset")
+        }
+        assertTrue(r is Auth.Refreshed.TryLater)
+        assertTrue("the last send ends inside 30 s", lastStart + 10_000 <= 30_000)
+    }
+
+    @Test
+    fun anAnswerIsNotRetried() {
+        var sends = 0
+        val r = Auth.refreshing({ 0 }, {}) { sends++; 503 to """{"error":"temporarily_unavailable"}""" }
+        assertTrue(r is Auth.Refreshed.TryLater)
+        assertEquals(1, sends)
     }
 }

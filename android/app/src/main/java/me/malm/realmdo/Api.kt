@@ -1,5 +1,6 @@
 package me.malm.realmdo
 
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -141,6 +142,8 @@ class SignedOut : ApiException(401, "Disconnected from your realm. Connect again
  * token used again after 30 seconds disconnects the phone.
  */
 object Session {
+    private const val TAG = "realmdo"
+
     /** Refresh this long before the access token runs out. */
     private const val MARGIN_MS = 60_000L
 
@@ -160,9 +163,13 @@ object Session {
             }
             Auth.Refreshed.Disconnected -> {
                 prefs.dropTokens()
+                Log.w(TAG, "refresh: invalid_grant, disconnected")
                 null
             }
-            Auth.Refreshed.TryLater -> current
+            is Auth.Refreshed.TryLater -> {
+                Log.w(TAG, "refresh failed, keeping the tokens: ${r.why}")
+                current
+            }
         }
     }
 }

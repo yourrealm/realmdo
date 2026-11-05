@@ -2,6 +2,7 @@ package me.malm.realmdo
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -80,8 +81,8 @@ object Auth {
         /** `invalid_grant`: the connection is gone, so drop the tokens. */
         data object Disconnected : Refreshed
 
-        /** Phone apps turned off, Home starting, or anything else: keep the tokens. */
-        data object TryLater : Refreshed
+        /** Phone apps turned off, Home starting, or anything else: keep the tokens. [why] is for the log. */
+        data class TryLater(val why: String) : Refreshed
     }
 
     fun refreshed(status: Int, body: String, nowMs: Long): Refreshed {
@@ -89,7 +90,7 @@ object Auth {
         return when {
             status == 200 && json != null -> Refreshed.Done(Tokens.from(json, nowMs))
             json?.optString("error") == "invalid_grant" -> Refreshed.Disconnected
-            else -> Refreshed.TryLater
+            else -> Refreshed.TryLater("HTTP $status ${json?.optString("error").orEmpty()}".trim())
         }
     }
 
@@ -139,11 +140,37 @@ object Auth {
         return Tokens.from(JSONObject(ok(http(endpoint, FORM, body))), System.currentTimeMillis())
     }
 
-    /** A network failure is [Refreshed.TryLater] too. */
+    /**
+     * Home may have rotated the token even when its answer never arrived, and
+     * the old one used after 30 seconds disconnects the phone. Within those
+     * 30 seconds Home replays the answer, so a network failure sends the same
+     * token again while there is time; past that it is [Refreshed.TryLater].
+     */
     fun refresh(endpoint: String, clientId: String, refreshToken: String): Refreshed {
         val body = form("grant_type" to "refresh_token", "refresh_token" to refreshToken, "client_id" to clientId)
-        val (status, text) = runCatching { http(endpoint, FORM, body) }.getOrElse { return Refreshed.TryLater }
-        return refreshed(status, text, System.currentTimeMillis())
+        return refreshing(System::currentTimeMillis, Thread::sleep) { http(endpoint, FORM, body, REFRESH_TIMEOUT_MS) }
+    }
+
+    /** Home replays a rotation this long, counted from our first send (which is before Home rotates). */
+    private const val REPLAY_WINDOW_MS = 30_000L
+    private const val REFRESH_TIMEOUT_MS = 5_000
+    private const val RETRY_PAUSE_MS = 1_000L
+
+    /** [refresh]'s retries, with the clock and the network passed in for tests. */
+    internal fun refreshing(now: () -> Long, pause: (Long) -> Unit, send: () -> Pair<Int, String>): Refreshed {
+        val deadline = now() + REPLAY_WINDOW_MS
+        // An attempt can take a connect and a read timeout; start one only if it ends inside the window.
+        val attempt = 2L * REFRESH_TIMEOUT_MS
+        while (true) {
+            val failure = try {
+                val (status, text) = send()
+                return refreshed(status, text, now())
+            } catch (e: IOException) {
+                e
+            }
+            if (now() + RETRY_PAUSE_MS + attempt > deadline) return Refreshed.TryLater(failure.toString())
+            pause(RETRY_PAUSE_MS)
+        }
     }
 
     /** Signs out at Home, as Disconnect on its Phones page would. */
@@ -153,11 +180,11 @@ object Auth {
 
     private const val FORM = "application/x-www-form-urlencoded"
 
-    private fun http(url: String, type: String? = null, body: String? = null): Pair<Int, String> {
+    private fun http(url: String, type: String? = null, body: String? = null, timeoutMs: Int = 10_000): Pair<Int, String> {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 10_000
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
             conn.setRequestProperty("Accept", "application/json")
             if (body != null) {
                 conn.requestMethod = "POST"
