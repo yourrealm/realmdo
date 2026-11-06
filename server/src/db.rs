@@ -1,5 +1,6 @@
 //! SQLite storage. One connection, migrations by `PRAGMA user_version`.
 
+use crate::date::Weekday;
 use crate::slots::{Slot, SlotTimes};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Type, ValueRef};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -71,6 +72,8 @@ pub struct Task {
     pub ramp_days: Option<i64>,
     /// Slot: which slots of the day, in day order.
     pub slots: Option<Vec<Slot>>,
+    /// Slot: the days of the week it is on, Monday first. `None` is every day.
+    pub weekdays: Option<Vec<Weekday>>,
     /// Free text; `None` when empty. Kept across completions.
     pub notes: Option<String>,
     /// A timed routine, run step by step on the phone; `None` when empty.
@@ -181,6 +184,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE tasks ADD COLUMN lead_days INTEGER;",
     // v10: Realm signs the phone in now, so realmdo's own bearer tokens go.
     "DROP TABLE tokens;",
+    // v11: the weekdays a slot task is on, as JSON like slots. NULL is every day.
+    "ALTER TABLE tasks ADD COLUMN weekdays TEXT;",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -308,7 +313,7 @@ const TASK_SELECT: &str =
         (SELECT MAX(c.completed_at) FROM completions c WHERE c.task_id = t.id),
         (SELECT GROUP_CONCAT(c.slot) FROM completions c
             WHERE c.task_id = t.id AND c.day = :day AND c.slot IS NOT NULL),
-        t.steps, t.position, t.lead_days
+        t.steps, t.position, t.lead_days, t.weekdays
      FROM tasks t";
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
@@ -322,6 +327,11 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         .map(|s| serde_json::from_str::<Vec<Step>>(&s))
         .transpose()
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(12, Type::Text, Box::new(e)))?;
+    let weekdays: Option<String> = r.get(15)?;
+    let weekdays = weekdays
+        .map(|s| serde_json::from_str::<Vec<Weekday>>(&s))
+        .transpose()
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(15, Type::Text, Box::new(e)))?;
     let checked: Option<String> = r.get(11)?;
     // GROUP_CONCAT has no order; put the slots back in day order.
     let mut checked_today: Vec<Slot> = checked
@@ -337,6 +347,7 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         after_days: r.get(4)?,
         ramp_days: r.get(5)?,
         slots,
+        weekdays,
         notes: r.get(9)?,
         steps,
         position: r.get(13)?,
@@ -381,6 +392,7 @@ pub struct NewTask<'a> {
     pub after_days: Option<i64>,
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
+    pub weekdays: Option<Vec<Weekday>>,
     pub notes: Option<&'a str>,
     pub steps: Option<&'a [Step]>,
 }
@@ -396,12 +408,13 @@ pub fn insert_task(
         .slots
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
+    let weekdays = new.weekdays.as_deref().map(weekdays_json);
     let steps = new.steps.map(steps_json);
     // New tasks go to the top of the user's order.
     let id: i64 = conn.query_row(
         "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, notes,
-            steps, created_at, lead_days, position)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+            steps, created_at, lead_days, weekdays, position)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
             (SELECT COALESCE(MIN(position), 1) - 1 FROM tasks
              WHERE user_id = ?1 AND done_at IS NULL))
          RETURNING id",
@@ -416,7 +429,8 @@ pub fn insert_task(
             new.notes,
             steps,
             now,
-            new.lead_days
+            new.lead_days,
+            weekdays
         ],
         |r| r.get(0),
     )?;
@@ -427,6 +441,10 @@ fn steps_json(steps: &[Step]) -> String {
     serde_json::to_string(steps).expect("steps serialize")
 }
 
+fn weekdays_json(days: &[Weekday]) -> String {
+    serde_json::to_string(days).expect("weekdays serialize")
+}
+
 /// Changed fields of a task. The kind itself never changes.
 pub struct TaskUpdate<'a> {
     pub title: &'a str,
@@ -435,6 +453,7 @@ pub struct TaskUpdate<'a> {
     pub after_days: Option<i64>,
     pub ramp_days: Option<i64>,
     pub slots: Option<Vec<Slot>>,
+    pub weekdays: Option<Vec<Weekday>>,
     pub notes: Option<&'a str>,
     pub steps: Option<&'a [Step]>,
 }
@@ -451,10 +470,11 @@ pub fn update_task(
         .slots
         .as_ref()
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
+    let weekdays = upd.weekdays.as_deref().map(weekdays_json);
     let steps = upd.steps.map(steps_json);
     let n = conn.execute(
         "UPDATE tasks SET title = ?3, due_on = ?4, after_days = ?5, ramp_days = ?6, slots = ?7,
-            notes = ?8, steps = ?9, lead_days = ?10
+            notes = ?8, steps = ?9, lead_days = ?10, weekdays = ?11
          WHERE id = ?1 AND user_id = ?2",
         params![
             id,
@@ -466,7 +486,8 @@ pub fn update_task(
             slots,
             upd.notes,
             steps,
-            upd.lead_days
+            upd.lead_days,
+            weekdays
         ],
     )?;
     if n == 0 {
@@ -626,6 +647,7 @@ mod tests {
             after_days: None,
             ramp_days: None,
             slots: None,
+            weekdays: None,
             notes: None,
             steps: None,
         }
@@ -640,6 +662,7 @@ mod tests {
             after_days: Some(after),
             ramp_days: ramp,
             slots: None,
+            weekdays: None,
             notes: None,
             steps: None,
         }
@@ -654,6 +677,7 @@ mod tests {
             after_days: None,
             ramp_days: None,
             slots: Some(slots.to_vec()),
+            weekdays: None,
             notes: None,
             steps: None,
         }
@@ -816,6 +840,7 @@ mod tests {
             after_days: None,
             ramp_days: None,
             slots: None,
+            weekdays: None,
             notes: Some("the blue one"),
             steps: None,
         };
@@ -866,6 +891,7 @@ mod tests {
             after_days: Some(2),
             ramp_days: None,
             slots: None,
+            weekdays: None,
             notes: None,
             steps: Some(&steps),
         };

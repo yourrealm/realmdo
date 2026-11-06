@@ -68,6 +68,8 @@ const SLOT_CURRENT: f64 = 1.0;
 const SLOT_UPCOMING: f64 = -0.5;
 /// Everything checked (or nothing left today): hidden.
 const SLOT_DONE: f64 = -1.0;
+/// Not one of the task's weekdays: hidden all day.
+pub const SLOT_OFF_DAY: f64 = -1.0;
 
 /// Slot task: the most pressing of today's slots decides. A passed unchecked
 /// slot outranks the current one, and both are important.

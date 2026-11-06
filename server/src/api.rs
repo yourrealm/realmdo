@@ -7,6 +7,7 @@
 //!
 //! Every "today" and "now" is the user's local time (their time zone setting).
 
+use crate::date::Weekday;
 use crate::slots::{Slot, SlotTimes, format_hhmm, parse_hhmm};
 use crate::urgency::SlotState;
 use crate::{clock, date, db, secret, urgency};
@@ -230,6 +231,10 @@ struct TaskView {
     today: Option<Vec<SlotStatus>>,
     /// Slot tasks: the slot a bare "done" would check.
     pending_slot: Option<Slot>,
+    /// A hidden task's next day in the list, `YYYY-MM-DD`. `None` while it
+    /// shows, and for a slot task that is only waiting for a later slot or
+    /// is done for today.
+    back_on: Option<String>,
 }
 
 fn slot_statuses(task: &db::Task, times: &SlotTimes, minute: u16) -> Vec<SlotStatus> {
@@ -252,34 +257,35 @@ fn pending_slot(statuses: &[SlotStatus]) -> Option<Slot> {
 
 fn view(task: db::Task, ctx: &Ctx) -> TaskView {
     let today = ctx.local.day;
-    let (urgency, statuses) = match task.kind {
-        db::Kind::Once => (
-            urgency::once(
-                task.due_on.as_deref().and_then(date::parse_day),
-                task.lead_days,
-                today,
-            ),
-            None,
-        ),
+    let (urgency, statuses, back) = match task.kind {
+        db::Kind::Once => {
+            let due = task.due_on.as_deref().and_then(date::parse_day);
+            let u = urgency::once(due, task.lead_days, today);
+            let lead = task.lead_days.unwrap_or(urgency::ONCE_LEAD_DAYS).max(0);
+            (u, None, due.filter(|_| u < 0.0).map(|d| d - lead))
+        }
         db::Kind::Interval => {
             // The clock starts at creation until the first completion.
             let last_day = clock::day_of(task.last_done_at.unwrap_or(task.created_at), &ctx.tz);
-            (
-                urgency::interval(
-                    task.after_days.unwrap_or(0),
-                    task.ramp_days,
-                    last_day,
-                    today,
-                ),
-                None,
-            )
+            let after = task.after_days.unwrap_or(0);
+            let u = urgency::interval(after, task.ramp_days, last_day, today);
+            (u, None, (u < 0.0).then_some(last_day + after))
         }
         db::Kind::Slot => {
+            // Statuses even on an off day, so it can still be checked.
             let statuses = slot_statuses(&task, &ctx.user.slot_times, ctx.local.minute);
-            (
-                urgency::slots(statuses.iter().map(|s| s.state)),
-                Some(statuses),
-            )
+            match task.weekdays.as_deref() {
+                Some(days) if !days.contains(&date::Weekday::of(today)) => (
+                    urgency::SLOT_OFF_DAY,
+                    Some(statuses),
+                    date::next_on(days, today + 1),
+                ),
+                _ => (
+                    urgency::slots(statuses.iter().map(|s| s.state)),
+                    Some(statuses),
+                    None,
+                ),
+            }
         }
     };
     TaskView {
@@ -288,6 +294,7 @@ fn view(task: db::Task, ctx: &Ctx) -> TaskView {
         important: urgency::is_important(urgency),
         pending_slot: statuses.as_deref().and_then(pending_slot),
         today: statuses,
+        back_on: back.map(date::day_key),
     }
 }
 
@@ -423,6 +430,7 @@ struct NewTask {
     after_days: Option<i64>,
     ramp_days: Option<i64>,
     slots: Option<Vec<Slot>>,
+    weekdays: Option<Vec<Weekday>>,
     notes: Option<String>,
     steps: Option<Vec<db::Step>>,
 }
@@ -486,11 +494,26 @@ fn clean_steps(steps: Option<Vec<db::Step>>) -> Result<Option<Vec<db::Step>>, Ap
         .map(Some)
 }
 
-/// Checks the fields that belong to each kind. Returns the cleaned due date
-/// and slots (deduplicated, in day order).
-fn validate_new_task(body: &NewTask) -> Result<(Option<String>, Option<Vec<Slot>>), ApiError> {
+/// Deduplicated, Monday first. All seven is the same as none: every day.
+fn clean_weekdays(mut days: Vec<Weekday>) -> Result<Option<Vec<Weekday>>, ApiError> {
+    days.sort();
+    days.dedup();
+    if days.is_empty() {
+        return Err(bad("weekdays must name at least one day"));
+    }
+    Ok((days.len() < Weekday::COUNT).then_some(days))
+}
+
+type Cleaned = (Option<String>, Option<Vec<Slot>>, Option<Vec<Weekday>>);
+
+/// Checks the fields that belong to each kind. Returns the cleaned due date,
+/// slots (deduplicated, in day order) and weekdays.
+fn validate_new_task(body: &NewTask) -> Result<Cleaned, ApiError> {
     let due_on = body.due_on.clone().filter(|d| !d.is_empty());
     let has_interval_fields = body.after_days.is_some() || body.ramp_days.is_some();
+    if body.kind != db::Kind::Slot && body.weekdays.is_some() {
+        return Err(bad("weekdays are for slot tasks"));
+    }
     match body.kind {
         db::Kind::Once => {
             if has_interval_fields {
@@ -509,7 +532,7 @@ fn validate_new_task(body: &NewTask) -> Result<(Option<String>, Option<Vec<Slot>
             {
                 return Err(bad("lead_days must be 0 to 3650"));
             }
-            Ok((due_on, None))
+            Ok((due_on, None, None))
         }
         db::Kind::Interval => {
             if due_on.is_some() || body.lead_days.is_some() {
@@ -527,11 +550,11 @@ fn validate_new_task(body: &NewTask) -> Result<(Option<String>, Option<Vec<Slot>
             {
                 return Err(bad("ramp_days must be 1 to 3650"));
             }
-            Ok((None, None))
+            Ok((None, None, None))
         }
         db::Kind::Slot => {
             if due_on.is_some() || body.lead_days.is_some() || has_interval_fields {
-                return Err(bad("a slot task takes only title and slots"));
+                return Err(bad("a slot task takes only title, slots and weekdays"));
             }
             let mut slots: Vec<Slot> = body.slots.clone().unwrap_or_default();
             slots.sort();
@@ -539,7 +562,13 @@ fn validate_new_task(body: &NewTask) -> Result<(Option<String>, Option<Vec<Slot>
             if slots.is_empty() {
                 return Err(bad("slots must name at least one slot"));
             }
-            Ok((None, Some(slots)))
+            let weekdays = body
+                .weekdays
+                .clone()
+                .map(clean_weekdays)
+                .transpose()?
+                .flatten();
+            Ok((None, Some(slots), weekdays))
         }
     }
 }
@@ -555,7 +584,7 @@ async fn create_task(
             "title must be 1 to {MAX_TITLE} characters"
         )));
     }
-    let (due_on, slots) = validate_new_task(&body)?;
+    let (due_on, slots, weekdays) = validate_new_task(&body)?;
     let notes = clean_notes(body.notes)?;
     let steps = clean_steps(body.steps)?;
     let ctx = Ctx::new(&state, id.user);
@@ -572,6 +601,7 @@ async fn create_task(
                 after_days: body.after_days,
                 ramp_days: body.ramp_days,
                 slots,
+                weekdays,
                 notes: notes.as_deref(),
                 steps: steps.as_deref(),
             };
@@ -583,7 +613,8 @@ async fn create_task(
 
 /// A partial edit. Absent fields keep their value; `due_on: null` clears the
 /// date, `lead_days: null` and `ramp_days: null` return to the defaults, `notes: null` (or
-/// blank) clears the notes and `steps: null` (or `[]`) clears the steps.
+/// blank) clears the notes, `steps: null` (or `[]`) clears the steps and
+/// `weekdays: null` (or all seven) makes a slot task every day again.
 #[derive(Deserialize)]
 struct TaskPatch {
     title: Option<String>,
@@ -596,6 +627,8 @@ struct TaskPatch {
     #[serde(default, deserialize_with = "double_option")]
     ramp_days: Option<Option<i64>>,
     slots: Option<Vec<Slot>>,
+    #[serde(default, deserialize_with = "double_option")]
+    weekdays: Option<Option<Vec<Weekday>>>,
     #[serde(default, deserialize_with = "double_option")]
     notes: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -649,6 +682,10 @@ async fn patch_task(
     let mut after_days = current.after_days;
     let mut ramp_days = current.ramp_days;
     let mut slots = current.slots.clone();
+    let mut weekdays = current.weekdays.clone();
+    if current.kind != db::Kind::Slot && patch.weekdays.is_some() {
+        return Err(bad("weekdays are for slot tasks"));
+    }
     let notes = match patch.notes {
         Some(n) => clean_notes(n)?,
         None => current.notes.clone(),
@@ -710,7 +747,10 @@ async fn patch_task(
                 || patch.after_days.is_some()
                 || patch.ramp_days.is_some()
             {
-                return Err(bad("a slot task takes only title and slots"));
+                return Err(bad("a slot task takes only title, slots and weekdays"));
+            }
+            if let Some(w) = patch.weekdays {
+                weekdays = w.map(clean_weekdays).transpose()?.flatten();
             }
             if let Some(mut s) = patch.slots {
                 s.sort();
@@ -731,6 +771,7 @@ async fn patch_task(
                 after_days,
                 ramp_days,
                 slots,
+                weekdays,
                 notes: notes.as_deref(),
                 steps: steps.as_deref(),
             };
@@ -1125,6 +1166,93 @@ mod tests {
         let plain = body["id"].as_i64().unwrap();
         let (status, _) = done(&app, plain, Some(json!({ "slot": "morning" }))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "slot on a one-off");
+    }
+
+    #[tokio::test]
+    async fn slot_tasks_can_skip_weekdays() {
+        // NOON_UTC is a Sunday.
+        let app = app();
+        let (status, body) = create(
+            &app,
+            json!({ "title": "gym", "kind": "slot", "slots": ["morning"],
+                    "weekdays": ["fri", "mon", "wed", "mon"] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let id = body["id"].as_i64().unwrap();
+        assert_eq!(
+            body["weekdays"],
+            json!(["mon", "wed", "fri"]),
+            "Monday first"
+        );
+        assert_eq!(body["urgency"], -1.0, "hidden on an off day, never overdue");
+        assert_eq!(body["important"], false);
+        assert_eq!(body["back_on"], "2026-08-31");
+        assert_eq!(body["pending_slot"], "morning", "still checkable");
+
+        // Going anyway counts, and it stays hidden.
+        let (status, body) = done(&app, id, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["today"][0]["state"], "done");
+        assert_eq!(body["back_on"], "2026-08-31");
+
+        let patch = |w: Value| {
+            request(
+                Method::PATCH,
+                &format!("/api/tasks/{id}"),
+                &[MAX],
+                Some(json!({ "weekdays": w })),
+            )
+        };
+        let (status, body) = call(&app, patch(json!(["sun"]))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["urgency"], -1.0, "today now, and already done");
+        assert_eq!(body["back_on"], Value::Null);
+        let (_, body) = call(
+            &app,
+            patch(json!(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])),
+        )
+        .await;
+        assert_eq!(body["weekdays"], Value::Null, "all seven is every day");
+        let (_, body) = call(&app, patch(json!(["sat"]))).await;
+        assert_eq!(body["back_on"], "2026-09-05");
+        let (_, body) = call(&app, patch(Value::Null)).await;
+        assert_eq!(body["weekdays"], Value::Null);
+        let (status, _) = call(&app, patch(json!([]))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        for bad in [
+            json!({ "title": "x", "kind": "slot", "slots": ["morning"], "weekdays": [] }),
+            json!({ "title": "x", "kind": "slot", "slots": ["morning"], "weekdays": ["monday"] }),
+            json!({ "title": "x", "weekdays": ["mon"] }),
+            json!({ "title": "x", "kind": "interval", "after_days": 2, "weekdays": ["mon"] }),
+        ] {
+            let (status, _) = create(&app, bad.clone()).await;
+            assert!(status.is_client_error(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn hidden_tasks_say_when_they_are_back() {
+        let app = app();
+        let (_, body) = create(&app, json!({ "title": "far", "due_on": "2026-09-10" })).await;
+        assert_eq!(body["back_on"], "2026-09-03", "a week before, by default");
+        let (_, body) = create(&app, json!({ "title": "soon", "due_on": "2026-09-01" })).await;
+        assert_eq!(body["back_on"], Value::Null, "already showing");
+        let (_, body) = create(&app, json!({ "title": "undated" })).await;
+        assert_eq!(body["back_on"], Value::Null);
+        let (_, body) = create(
+            &app,
+            json!({ "title": "plants", "kind": "interval", "after_days": 3 }),
+        )
+        .await;
+        assert_eq!(body["back_on"], "2026-09-02");
+        let (_, body) = create(
+            &app,
+            json!({ "title": "teeth", "kind": "slot", "slots": ["evening"] }),
+        )
+        .await;
+        assert_eq!(body["back_on"], Value::Null, "later today is not back_on");
     }
 
     #[tokio::test]
