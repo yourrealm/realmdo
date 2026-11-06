@@ -41,6 +41,8 @@ const MAX_DAYS: i64 = 3650;
 const RECENT_ONCE: i64 = 30;
 /// Ids in one reorder: far more open tasks than anyone keeps.
 const MAX_ORDER: usize = 1000;
+const MAX_SECTION_NAME: usize = 60;
+const MAX_SECTIONS: i64 = 100;
 
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
@@ -96,7 +98,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/me", get(me))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/tasks", get(list_tasks).post(create_task))
-        .route("/api/tasks/order", put(order_tasks))
+        .route("/api/order", put(put_order))
+        .route("/api/sections", get(list_sections).post(create_section))
+        .route(
+            "/api/sections/{id}",
+            delete(delete_section).patch(rename_section),
+        )
         .route("/api/tasks/{id}/done", post(done_task))
         .route("/api/tasks/{id}", delete(delete_task).patch(patch_task))
         .route("/api/completions", get(list_completions))
@@ -393,31 +400,116 @@ async fn list_tasks(
 
 #[derive(Deserialize)]
 struct Order {
-    ids: Vec<i64>,
+    items: Vec<db::Place>,
 }
 
-/// Sets the user's order: `ids` first to last. Answers the list as it now is.
-async fn order_tasks(
+/// The whole order: open tasks and sections, each by position.
+#[derive(Serialize)]
+struct OrderView {
+    tasks: Vec<TaskView>,
+    sections: Vec<db::Section>,
+}
+
+async fn order_view(state: &AppState, user: db::User) -> Result<OrderView, ApiError> {
+    let user_id = user.id;
+    let tasks = open_views(state, user).await?;
+    let sections = state.db(move |c| db::sections(c, user_id)).await?;
+    Ok(OrderView { tasks, sections })
+}
+
+/// Puts tasks and sections in this order: `{ "items": [{ "task": 1 },
+/// { "section": 2 }, …] }`. Entries left out keep their place.
+async fn put_order(
     State(state): State<AppState>,
     id: Identity,
     ApiJson(body): ApiJson<Order>,
-) -> Result<Json<Vec<TaskView>>, ApiError> {
-    if body.ids.len() > MAX_ORDER {
-        return Err(ApiError::BadRequest(format!("at most {MAX_ORDER} ids")));
+) -> Result<Json<OrderView>, ApiError> {
+    if body.items.len() > MAX_ORDER {
+        return Err(ApiError::BadRequest(format!("at most {MAX_ORDER} items")));
     }
     let mut seen = std::collections::HashSet::new();
-    if !body.ids.iter().all(|i| seen.insert(*i)) {
-        return Err(bad("ids must not repeat"));
+    if !body.items.iter().all(|i| seen.insert(*i)) {
+        return Err(bad("items must not repeat"));
     }
     let user_id = id.user.id;
-    let ids = body.ids;
-    if !state
-        .db(move |c| db::reorder_tasks(c, user_id, &ids))
+    let items = body.items;
+    if !state.db(move |c| db::reorder(c, user_id, &items)).await? {
+        return Err(bad("items must name your open tasks and sections"));
+    }
+    Ok(Json(order_view(&state, id.user).await?))
+}
+
+#[derive(Deserialize)]
+struct SectionBody {
+    name: String,
+}
+
+fn clean_section_name(name: &str) -> Result<String, ApiError> {
+    let name = name.trim().to_string();
+    if name.is_empty() || name.chars().count() > MAX_SECTION_NAME {
+        return Err(ApiError::BadRequest(format!(
+            "name must be 1 to {MAX_SECTION_NAME} characters"
+        )));
+    }
+    Ok(name)
+}
+
+async fn list_sections(
+    State(state): State<AppState>,
+    id: Identity,
+) -> Result<Json<Vec<db::Section>>, ApiError> {
+    let user_id = id.user.id;
+    Ok(Json(state.db(move |c| db::sections(c, user_id)).await?))
+}
+
+async fn create_section(
+    State(state): State<AppState>,
+    id: Identity,
+    ApiJson(body): ApiJson<SectionBody>,
+) -> Result<(StatusCode, Json<db::Section>), ApiError> {
+    let name = clean_section_name(&body.name)?;
+    let user_id = id.user.id;
+    let section = state
+        .db(move |c| {
+            if db::count_sections(c, user_id)? >= MAX_SECTIONS {
+                return Ok(None);
+            }
+            db::insert_section(c, user_id, &name).map(Some)
+        })
+        .await?
+        .ok_or_else(|| ApiError::BadRequest(format!("at most {MAX_SECTIONS} sections")))?;
+    Ok((StatusCode::CREATED, Json(section)))
+}
+
+async fn rename_section(
+    State(state): State<AppState>,
+    id: Identity,
+    Path(section_id): Path<i64>,
+    ApiJson(body): ApiJson<SectionBody>,
+) -> Result<Json<db::Section>, ApiError> {
+    let name = clean_section_name(&body.name)?;
+    let user_id = id.user.id;
+    state
+        .db(move |c| db::rename_section(c, user_id, section_id, &name))
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
+}
+
+async fn delete_section(
+    State(state): State<AppState>,
+    id: Identity,
+    Path(section_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let user_id = id.user.id;
+    if state
+        .db(move |c| db::delete_section(c, user_id, section_id))
         .await?
     {
-        return Err(bad("ids must name your open tasks"));
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound)
     }
-    Ok(Json(open_views(&state, id.user).await?))
 }
 
 #[derive(Deserialize)]
@@ -1588,6 +1680,14 @@ mod tests {
             .collect()
     }
 
+    fn task_items(ids: &[i64]) -> Value {
+        json!({ "items": ids.iter().map(|id| json!({ "task": id })).collect::<Vec<_>>() })
+    }
+
+    async fn put_order(app: &Router, body: Value) -> (StatusCode, Value) {
+        call(app, request(Method::PUT, "/api/order", &[MAX], Some(body))).await
+    }
+
     #[tokio::test]
     async fn the_list_is_the_users_order_and_new_tasks_go_on_top() {
         let app = app();
@@ -1606,14 +1706,9 @@ mod tests {
         );
 
         let due = body[0]["id"].as_i64().unwrap();
-        let order = json!({ "ids": [ids[0], ids[2], ids[1], due] });
-        let (status, body) = call(
-            &app,
-            request(Method::PUT, "/api/tasks/order", &[MAX], Some(order)),
-        )
-        .await;
+        let (status, body) = put_order(&app, task_items(&[ids[0], ids[2], ids[1], due])).await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(titles(&body), vec!["a", "c", "b", "due"]);
+        assert_eq!(titles(&body["tasks"]), vec!["a", "c", "b", "due"]);
 
         let (_, body) = create(&app, json!({ "title": "new" })).await;
         let new_id = body["id"].as_i64().unwrap();
@@ -1627,58 +1722,142 @@ mod tests {
             .rev()
             .map(|t| t["id"].as_i64().unwrap())
             .collect();
-        let (_, body) = call(
-            &app,
-            request(
-                Method::PUT,
-                "/api/tasks/order",
-                &[MAX],
-                Some(json!({ "ids": all })),
-            ),
-        )
-        .await;
-        assert_eq!(titles(&body), vec!["due", "b", "c", "a", "new"]);
-        assert_eq!(body[4]["id"], new_id);
+        let (_, body) = put_order(&app, task_items(&all)).await;
+        assert_eq!(titles(&body["tasks"]), vec!["due", "b", "c", "a", "new"]);
+        assert_eq!(body["tasks"][4]["id"], new_id);
     }
 
     #[tokio::test]
-    async fn order_takes_only_the_users_open_tasks() {
+    async fn sections_share_the_order_with_tasks() {
+        let app = app();
+        let section =
+            |method: Method, path: &str, body: Option<Value>| request(method, path, &[MAX], body);
+        let (_, a) = create(&app, json!({ "title": "a" })).await;
+        let (_, b) = create(&app, json!({ "title": "b" })).await;
+        let (status, s) = call(
+            &app,
+            section(
+                Method::POST,
+                "/api/sections",
+                Some(json!({ "name": "  Morning " })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{s}");
+        assert_eq!(s["name"], "Morning", "trimmed");
+        let sid = s["id"].as_i64().unwrap();
+        // New sections go to the bottom, empty.
+        assert!(s["position"].as_i64() > b["position"].as_i64());
+        assert!(s["position"].as_i64() > a["position"].as_i64());
+
+        let (status, body) = put_order(
+            &app,
+            json!({ "items": [{ "task": a["id"] }, { "section": sid }, { "task": b["id"] }] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(titles(&body["tasks"]), vec!["a", "b"]);
+        assert_eq!(body["sections"][0]["position"], 1);
+        assert_eq!(body["tasks"][1]["position"], 2);
+
+        // A new task goes above every section.
+        let (_, c) = create(&app, json!({ "title": "c" })).await;
+        assert!(c["position"].as_i64() < Some(0));
+
+        let (status, body) = call(
+            &app,
+            section(
+                Method::PATCH,
+                &format!("/api/sections/{sid}"),
+                Some(json!({ "name": "Evening" })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["name"], "Evening");
+        let (status, _) = call(
+            &app,
+            section(
+                Method::PATCH,
+                &format!("/api/sections/{sid}"),
+                Some(json!({ "name": " " })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let eve = call(
+            &app,
+            request(
+                Method::GET,
+                "/api/sections",
+                &[("X-Realmdo-User", "eve")],
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(eve.1, json!([]), "sections are per user");
+
+        let (status, _) = call(
+            &app,
+            section(Method::DELETE, &format!("/api/sections/{sid}"), None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, body) = call(&app, section(Method::GET, "/api/sections", None)).await;
+        assert_eq!(body, json!([]));
+        let (_, body) = call(&app, request(Method::GET, "/api/tasks", &[MAX], None)).await;
+        assert_eq!(titles(&body), vec!["c", "a", "b"], "its tasks stay put");
+    }
+
+    #[tokio::test]
+    async fn order_takes_only_the_users_open_tasks_and_sections() {
         let app = app();
         let (_, body) = create(&app, json!({ "title": "mine" })).await;
         let mine = body["id"].as_i64().unwrap();
+        let eve = [("X-Realmdo-User", "eve")];
         let (_, body) = call(
             &app,
             request(
                 Method::POST,
                 "/api/tasks",
-                &[("X-Realmdo-User", "eve")],
+                &eve,
                 Some(json!({ "title": "eve's" })),
             ),
         )
         .await;
         let eves = body["id"].as_i64().unwrap();
+        let (_, body) = call(
+            &app,
+            request(
+                Method::POST,
+                "/api/sections",
+                &eve,
+                Some(json!({ "name": "eve's" })),
+            ),
+        )
+        .await;
+        let eves_section = body["id"].as_i64().unwrap();
         let (_, body) = create(&app, json!({ "title": "archived" })).await;
         let archived = body["id"].as_i64().unwrap();
         done(&app, archived, None).await;
 
-        for (ids, why) in [
-            (json!([mine, eves]), "another user's"),
-            (json!([mine, archived]), "archived"),
-            (json!([mine, mine]), "repeated"),
-            (json!([mine, 9999]), "unknown"),
+        for (items, why) in [
+            (
+                json!([{ "task": mine }, { "task": eves }]),
+                "another user's",
+            ),
+            (
+                json!([{ "task": mine }, { "section": eves_section }]),
+                "another user's section",
+            ),
+            (json!([{ "task": mine }, { "task": archived }]), "archived"),
+            (json!([{ "task": mine }, { "task": mine }]), "repeated"),
+            (json!([{ "task": mine }, { "task": 9999 }]), "unknown"),
+            (json!([{ "nope": mine }]), "not a task or section"),
         ] {
-            let (status, body) = call(
-                &app,
-                request(
-                    Method::PUT,
-                    "/api/tasks/order",
-                    &[MAX],
-                    Some(json!({ "ids": ids })),
-                ),
-            )
-            .await;
-            assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {body}");
-            assert!(body["error"].is_string());
+            let (status, body) = put_order(&app, json!({ "items": items })).await;
+            assert!(status.is_client_error(), "{why}: {body}");
+            assert!(body["error"].is_string(), "{why}");
         }
     }
 }

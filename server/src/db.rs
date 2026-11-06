@@ -186,6 +186,15 @@ const MIGRATIONS: &[&str] = &[
     "DROP TABLE tokens;",
     // v11: the weekdays a slot task is on, as JSON like slots. NULL is every day.
     "ALTER TABLE tasks ADD COLUMN weekdays TEXT;",
+    // v12: named dividers in the user's order. Their positions share one
+    // line with tasks.position.
+    "CREATE TABLE sections (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        position INTEGER NOT NULL
+    );
+    CREATE INDEX sections_user ON sections(user_id, position);",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -410,13 +419,14 @@ pub fn insert_task(
         .map(|s| serde_json::to_string(s).expect("slots serialize"));
     let weekdays = new.weekdays.as_deref().map(weekdays_json);
     let steps = new.steps.map(steps_json);
-    // New tasks go to the top of the user's order.
+    // New tasks go to the top of the user's order, above any section.
     let id: i64 = conn.query_row(
         "INSERT INTO tasks (user_id, title, kind, due_on, after_days, ramp_days, slots, notes,
             steps, created_at, lead_days, weekdays, position)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-            (SELECT COALESCE(MIN(position), 1) - 1 FROM tasks
-             WHERE user_id = ?1 AND done_at IS NULL))
+            (SELECT COALESCE(MIN(position), 1) - 1 FROM (
+                SELECT position FROM tasks WHERE user_id = ?1 AND done_at IS NULL
+                UNION ALL SELECT position FROM sections WHERE user_id = ?1)))
          RETURNING id",
         params![
             user_id,
@@ -543,22 +553,108 @@ pub fn delete_task(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result
     Ok(n > 0)
 }
 
-/// Puts the given open tasks in this order, first to last. Tasks left out
-/// keep their position. `false`, with nothing written, when an id is not one
-/// of the user's open tasks.
-pub fn reorder_tasks(conn: &Connection, user_id: i64, ids: &[i64]) -> rusqlite::Result<bool> {
+/// One entry of the user's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Place {
+    Task(i64),
+    Section(i64),
+}
+
+/// Puts open tasks and sections in this order, first to last. Entries left
+/// out keep their position. `false`, with nothing written, when an entry is
+/// not one of the user's open tasks or sections.
+pub fn reorder(conn: &Connection, user_id: i64, order: &[Place]) -> rusqlite::Result<bool> {
     let tx = conn.unchecked_transaction()?;
-    for (i, id) in ids.iter().enumerate() {
-        let n = tx.execute(
-            "UPDATE tasks SET position = ?3 WHERE id = ?1 AND user_id = ?2 AND done_at IS NULL",
-            params![id, user_id, i as i64],
-        )?;
+    for (i, place) in order.iter().enumerate() {
+        let n = match place {
+            Place::Task(id) => tx.execute(
+                "UPDATE tasks SET position = ?3 WHERE id = ?1 AND user_id = ?2 AND done_at IS NULL",
+                params![id, user_id, i as i64],
+            )?,
+            Place::Section(id) => tx.execute(
+                "UPDATE sections SET position = ?3 WHERE id = ?1 AND user_id = ?2",
+                params![id, user_id, i as i64],
+            )?,
+        };
         if n == 0 {
             return Ok(false);
         }
     }
     tx.commit()?;
     Ok(true)
+}
+
+// ---- sections ---------------------------------------------------------------
+
+/// A named divider in the user's order: the tasks after it, up to the next
+/// one, are in it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Section {
+    pub id: i64,
+    pub name: String,
+    pub position: i64,
+}
+
+fn section_row(r: &Row) -> rusqlite::Result<Section> {
+    Ok(Section {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        position: r.get(2)?,
+    })
+}
+
+pub fn sections(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<Section>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, position FROM sections WHERE user_id = ?1 ORDER BY position, id",
+    )?;
+    let rows = stmt.query_map(params![user_id], section_row)?;
+    rows.collect()
+}
+
+pub fn count_sections(conn: &Connection, user_id: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sections WHERE user_id = ?1",
+        params![user_id],
+        |r| r.get(0),
+    )
+}
+
+/// A new section goes to the bottom of the order, empty.
+pub fn insert_section(conn: &Connection, user_id: i64, name: &str) -> rusqlite::Result<Section> {
+    conn.query_row(
+        "INSERT INTO sections (user_id, name, position)
+         VALUES (?1, ?2, (SELECT COALESCE(MAX(position), -1) + 1 FROM (
+            SELECT position FROM tasks WHERE user_id = ?1 AND done_at IS NULL
+            UNION ALL SELECT position FROM sections WHERE user_id = ?1)))
+         RETURNING id, name, position",
+        params![user_id, name],
+        section_row,
+    )
+}
+
+pub fn rename_section(
+    conn: &Connection,
+    user_id: i64,
+    id: i64,
+    name: &str,
+) -> rusqlite::Result<Option<Section>> {
+    conn.query_row(
+        "UPDATE sections SET name = ?3 WHERE id = ?1 AND user_id = ?2
+         RETURNING id, name, position",
+        params![id, user_id, name],
+        section_row,
+    )
+    .optional()
+}
+
+/// Removes the divider only; its tasks stay where they are.
+pub fn delete_section(conn: &Connection, user_id: i64, id: i64) -> rusqlite::Result<bool> {
+    let n = conn.execute(
+        "DELETE FROM sections WHERE id = ?1 AND user_id = ?2",
+        params![id, user_id],
+    )?;
+    Ok(n > 0)
 }
 
 /// The latest completion of every recurring task, plus the latest
