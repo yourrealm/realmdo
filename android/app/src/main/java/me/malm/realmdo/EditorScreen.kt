@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -59,6 +61,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -78,6 +82,8 @@ fun EditorScreen(
     editor: EditorViewModel,
     tasks: TasksViewModel,
     slotTimes: Map<String, String>,
+    /** Whether others are open, so a new task will be placed among them. */
+    hasTasks: Boolean,
 ) {
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -131,7 +137,10 @@ fun EditorScreen(
             when (draft.kind) {
                 "once" -> DueSection(draft, editor)
                 "interval" -> RepeatSection(draft, editor)
-                "slot" -> SlotSection(draft.slots, slotTimes) { s -> editor.update { it.copy(slots = s) } }
+                "slot" -> {
+                    SlotSection(draft.slots, slotTimes) { s -> editor.update { it.copy(slots = s) } }
+                    DaysSection(draft.weekdays) { d -> editor.update { it.copy(weekdays = d) } }
+                }
             }
             Column {
                 NotesSection(draft.notes) { n -> editor.update { it.copy(notes = n) } }
@@ -141,7 +150,7 @@ fun EditorScreen(
             }
             if (draft.isNew) {
                 Text(
-                    "New tasks go to the top of your order.",
+                    if (!hasTasks) "New tasks go to the top of your order." else "After Save, you pick its place in your order.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -408,12 +417,46 @@ private fun SlotSection(slots: Set<String>, times: Map<String, String>, onChange
             }
         }
         Text(
-            "Each one is its own check, every day.",
+            "Each one is its own check.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
+
+/** Seven round toggles, Monday first. The last day on cannot be switched off. */
+@Composable
+private fun DaysSection(days: Set<String>, onChange: (Set<String>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionLabel("On")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            WEEKDAYS.forEach { day ->
+                val on = day in days
+                Surface(
+                    selected = on,
+                    onClick = { if (!on) onChange(days + day) else if (days.size > 1) onChange(days - day) },
+                    modifier = Modifier.weight(1f).height(44.dp).semantics { contentDescription = DAY_NAMES.getValue(day) },
+                    shape = CircleShape,
+                    color = if (on) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    contentColor = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    border = if (on) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            dayShort(day),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val DAY_NAMES = WEEKDAYS.zip(
+    listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+).toMap()
 
 @Composable
 private fun ColumnScope.NotesSection(notes: String, onChange: (String) -> Unit) {

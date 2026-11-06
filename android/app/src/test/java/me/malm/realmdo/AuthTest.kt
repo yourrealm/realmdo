@@ -78,7 +78,10 @@ class AuthTest {
     fun onlyInvalidGrantDisconnects() {
         val ok = """{"access_token":"a","refresh_token":"r","expires_in":900,"services":{"api":"https://x"}}"""
         assertTrue(Auth.refreshed(200, ok, 0) is Auth.Refreshed.Done)
-        assertEquals(Auth.Refreshed.Disconnected, Auth.refreshed(400, """{"error":"invalid_grant"}""", 0))
+        assertEquals(
+            Auth.Refreshed.Disconnected("this phone app was disconnected"),
+            Auth.refreshed(400, """{"error":"invalid_grant","error_description":"this phone app was disconnected"}""", 0),
+        )
         assertTrue(Auth.refreshed(400, """{"error":"access_denied"}""", 0) is Auth.Refreshed.TryLater)
         assertTrue(Auth.refreshed(503, """{"error":"temporarily_unavailable"}""", 0) is Auth.Refreshed.TryLater)
         assertTrue(Auth.refreshed(502, "<html>", 0) is Auth.Refreshed.TryLater)

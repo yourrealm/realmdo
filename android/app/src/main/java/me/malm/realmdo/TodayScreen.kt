@@ -41,10 +41,18 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 
 /**
- * Below the visible list: what is not due yet but can be done early. A slot
- * task whose slots are all checked is finished for the day and stays out.
+ * Below the visible list, in two folds of what can be done early. Later
+ * today: a slot task waiting for its next slot, by start time. Coming up:
+ * everything back on another day, soonest first. A slot task whose slots are
+ * all checked is finished for the day and stays out of both.
  */
-fun isLater(t: Task): Boolean = t.urgency < 0 && !(t.kind == "slot" && t.pendingSlot == null)
+fun laterToday(tasks: List<Task>): List<Task> = tasks
+    .filter { it.urgency < 0 && it.backOn == null && it.kind == "slot" && it.pendingSlot != null }
+    .sortedBy { SLOTS.indexOf(it.pendingSlot) }
+
+fun comingUp(tasks: List<Task>): List<Task> = tasks
+    .filter { it.urgency < 0 && it.backOn != null }
+    .sortedBy { it.backOn }
 
 /**
  * The day at a glance: the top task large (it is the one pinned to the
@@ -61,10 +69,12 @@ fun TodayScreen(
     onStart: (Task) -> Unit,
     onSettings: () -> Unit,
 ) {
-    var laterOpen by rememberSaveable { mutableStateOf(false) }
+    var todayOpen by rememberSaveable { mutableStateOf(true) }
+    var upOpen by rememberSaveable { mutableStateOf(false) }
     val done = rememberDone(vm)
     val visible = state.tasks.filter { it.urgency >= 0 }
-    val later = state.tasks.filter(::isLater)
+    val later = laterToday(state.tasks)
+    val coming = comingUp(state.tasks)
     val rest = visible.drop(1)
     PullToRefreshBox(
         isRefreshing = state.loading && state.tasks.isNotEmpty(),
@@ -104,7 +114,7 @@ fun TodayScreen(
             }
             val top = visible.firstOrNull()
             if (top == null) {
-                if (!state.loading) item(key = "empty") { AllClear(later.size) { laterOpen = true } }
+                if (!state.loading) item(key = "empty") { AllClear(later.size + coming.size) { todayOpen = true; upOpen = true } }
             } else {
                 item(key = "top-${top.id}") {
                     UpNext(top, onOpen = { onOpen(top) }, onDone = { done(top) }, onStart = { onStart(top) })
@@ -118,29 +128,34 @@ fun TodayScreen(
             }
             if (later.isNotEmpty()) {
                 item(key = "later") {
-                    TextButton(
-                        onClick = { laterOpen = !laterOpen },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            "Later · ${later.size}",
-                            Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Icon(
-                            if (laterOpen) Glyph.ChevronUp else Glyph.ChevronDown,
-                            if (laterOpen) "Hide later" else "Show later",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Fold(
+                        "Later today · ${later.size}",
+                        state.slotTimes[later.first().pendingSlot]?.let { "from $it" },
+                        todayOpen,
+                    ) { todayOpen = !todayOpen }
                 }
                 // Out of focus, but at hand to tick off early.
-                if (laterOpen) {
+                if (todayOpen) {
                     itemsIndexed(later, key = { _, t -> t.id }) { i, t ->
                         TaskRow(
                             t, i, later.size, Modifier.alpha(0.62f),
-                            standing = hiddenLabel(t) ?: detail(t),
+                            lead = state.slotTimes[t.pendingSlot],
+                            standing = t.pendingSlot?.let(::slotLabel),
+                            onOpen = { onOpen(t) }, onDone = { done(t) }, onStart = { onStart(t) },
+                        )
+                    }
+                }
+            }
+            if (coming.isNotEmpty()) {
+                item(key = "coming") {
+                    Fold("Coming up · ${coming.size}", "next ${backTag(coming.first().backOn!!)}", upOpen) { upOpen = !upOpen }
+                }
+                if (upOpen) {
+                    itemsIndexed(coming, key = { _, t -> t.id }) { i, t ->
+                        TaskRow(
+                            t, i, coming.size, Modifier.alpha(0.62f),
+                            lead = backTag(t.backOn!!),
+                            standing = comingLine(t),
                             onOpen = { onOpen(t) }, onDone = { done(t) }, onStart = { onStart(t) },
                         )
                     }
@@ -148,6 +163,38 @@ fun TodayScreen(
             }
         }
     }
+}
+
+/** A fold header: what is in it, a hint at the soonest, and the chevron. */
+@Composable
+private fun Fold(label: String, hint: String?, open: Boolean, onToggle: () -> Unit) {
+    TextButton(
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(
+            label,
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        hint?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(6.dp))
+        }
+        Icon(
+            if (open) Glyph.ChevronUp else Glyph.ChevronDown,
+            if (open) "Hide" else "Show",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** The second line of a Coming up row: its days, its interval, or its due date. */
+private fun comingLine(t: Task): String? = when (t.kind) {
+    "slot" -> listOfNotNull(weekdaysLabel(t.weekdays), t.slots?.joinToString(" · ") { slotLabel(it) }).joinToString(" · ")
+    "interval" -> "every ${t.afterDays ?: 0} d"
+    else -> t.dueOn?.let { "due ${shortDate(it)}" }
 }
 
 /** The top task, large: what the notification shows, with Done at hand. */
@@ -201,6 +248,8 @@ fun TaskRow(
     count: Int,
     modifier: Modifier = Modifier,
     standing: String? = detail(task),
+    /** A time or day before the title, for the Later folds. */
+    lead: String? = null,
     onOpen: () -> Unit,
     onDone: () -> Unit,
     onStart: () -> Unit,
@@ -208,6 +257,15 @@ fun TaskRow(
     val tone = tone(task)
     GroupRow(index, count, modifier.clickable(onClick = onOpen)) {
         CheckButton(task.title, hot = tone == Tone.Hot, onClick = onDone)
+        lead?.let {
+            Text(
+                it,
+                Modifier.width(52.dp),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Column(Modifier.weight(1f).padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 task.title,
@@ -238,7 +296,7 @@ private fun AllClear(later: Int, onShowLater: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text("Nothing due", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (later > 0) "$later coming up later." else "Add a task.",
+                    if (later > 0) "$later for later." else "Add a task.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

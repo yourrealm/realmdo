@@ -1,6 +1,7 @@
 package me.malm.realmdo
 
 import android.app.Application
+import android.util.Log
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -41,6 +42,12 @@ data class UiState(
     val history: List<Completion>? = null,
     /** A short confirmation for the snackbar, taken once by [TasksViewModel.snackShown]. */
     val snack: String? = null,
+    /** A task just created, waiting on the Order tab to be put in its place. */
+    val placing: Long? = null,
+    /** Named dividers in the order, by position. */
+    val sections: List<Section> = emptyList(),
+    /** Sections folded on the Order screen, by id. */
+    val folded: Set<Long> = emptySet(),
 )
 
 /** Holds the list and runs every API call off the main thread. */
@@ -52,6 +59,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
             username = prefs.username,
             home = prefs.home,
             liveUpdate = prefs.liveUpdate,
+            folded = prefs.foldedSections,
         ),
     )
     val state: StateFlow<UiState> = _state
@@ -69,6 +77,7 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
         if (!quiet) _state.update { it.copy(loading = true) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { api.tasks() } }
+            val sections = withContext(Dispatchers.IO) { runCatching { api.sections() }.getOrNull() }
             // Re-read who the token maps to; the server's answer can change.
             val name = withContext(Dispatchers.IO) { runCatching { api.me() }.getOrNull() }
             if (name != null && name != prefs.username) prefs.username = name
@@ -78,6 +87,8 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                     {
                         s.copy(
                             tasks = it,
+                            sections = sections ?: s.sections,
+                            folded = prefs.foldedSections,
                             loading = false,
                             error = null,
                             username = name ?: s.username,
@@ -105,28 +116,33 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
             val result = withContext(Dispatchers.IO) {
                 runCatching { if (draft.id == null) api.create(body) else api.update(draft.id, body) }
             }
+            // A new task with others to sit among goes to be placed; it is on top already.
+            result.getOrNull()?.takeIf { draft.isNew && _state.value.tasks.isNotEmpty() }?.let { created ->
+                _state.update { it.copy(tasks = listOf(created) + it.tasks, placing = created.id) }
+            }
             onDone(result.exceptionOrNull()?.let { it.message ?: "request failed" })
             if (result.isSuccess) refresh(quiet = true)
         }
     }
 
+    fun placed() = _state.update { it.copy(placing = null) }
+
     fun delete(id: Long, title: String) =
         mutate({ tasks -> tasks.filter { it.id != id } }, { it.delete(id) }, snack = "Deleted “$title”")
 
     /**
-     * Puts the tasks in this order. The list moves at once; the server's
-     * answer then replaces it, or a refresh puts it back on failure.
+     * Puts tasks and sections in this order. The lists move at once; the
+     * server's answer then replaces them, or a refresh puts them back on failure.
      */
-    fun order(ids: List<Long>) {
+    fun order(entries: List<Entry>) {
         val api = Api.from(prefs) ?: return
-        val byId = _state.value.tasks.associateBy { it.id }
-        val moved = ids.mapNotNull(byId::get)
-        _state.update { it.copy(tasks = moved + it.tasks.filter { t -> t.id !in ids }) }
+        val (tasks, sections) = positioned(entries)
+        _state.update { s -> s.copy(tasks = tasks + s.tasks.filter { t -> tasks.none { it.id == t.id } }, sections = sections) }
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { api.order(ids) } }
+            val result = withContext(Dispatchers.IO) { runCatching { api.order(entries) } }
             result.fold(
-                { tasks ->
-                    _state.update { it.copy(tasks = tasks, error = null) }
+                { (tasks, sections) ->
+                    _state.update { it.copy(tasks = tasks, sections = sections, error = null) }
                     notify(tasks)
                 },
                 { e ->
@@ -134,6 +150,36 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                     refresh(quiet = true)
                 },
             )
+        }
+    }
+
+    fun addSection(name: String) = sectionCall { api ->
+        val added = api.addSection(name)
+        _state.update { it.copy(sections = it.sections + added) }
+    }
+
+    fun renameSection(id: Long, name: String) = sectionCall { api ->
+        val renamed = api.renameSection(id, name)
+        _state.update { s -> s.copy(sections = s.sections.map { if (it.id == id) renamed else it }) }
+    }
+
+    /** Takes the divider away; its tasks stay where they are. */
+    fun removeSection(id: Long) = sectionCall { api ->
+        api.deleteSection(id)
+        _state.update { s -> s.copy(sections = s.sections.filter { it.id != id }, folded = s.folded - id) }
+        prefs.foldedSections = _state.value.folded
+    }
+
+    fun toggleFold(id: Long) {
+        _state.update { s -> s.copy(folded = if (id in s.folded) s.folded - id else s.folded + id) }
+        prefs.foldedSections = _state.value.folded
+    }
+
+    private fun sectionCall(block: (Api) -> Unit) {
+        val api = Api.from(prefs) ?: return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { block(api) } }
+            result.onFailure { e -> _state.update { it.copy(error = e.message ?: "request failed") } }
         }
     }
 
@@ -229,7 +275,9 @@ class TasksViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.launch {
                     val result = withContext(Dispatchers.IO) {
                         runCatching {
-                            prefs.saveTokens(Auth.exchange(prefs.tokenEndpoint, prefs.clientId, back.code, verifier))
+                            val tokens = Auth.exchange(prefs.tokenEndpoint, prefs.clientId, back.code, verifier)
+                            prefs.saveTokens(tokens)
+                            Log.i("realmdo", "connected, access token for ${(tokens.expiresAt - System.currentTimeMillis()) / 1000} s")
                             Api(prefs).me()
                         }
                     }

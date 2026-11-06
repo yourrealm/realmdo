@@ -56,8 +56,14 @@ data class Task(
     val rampDays: Long? = null,
     /** Slot: which slots of the day, in day order. */
     val slots: List<String>? = null,
+    /** Slot: the weekdays it is on ("mon".."sun"), Monday first; null is every day. */
+    val weekdays: List<String>? = null,
+    /** A hidden task's next day in the list, `YYYY-MM-DD`; null while it shows or waits for a later slot. */
+    val backOn: String? = null,
     /** Unix seconds; an interval task's clock starts here until its first completion. */
     val createdAt: Long = 0,
+    /** Its place in the user's order, on one line with the sections'. */
+    val position: Long = 0,
 ) {
     companion object {
         fun from(o: JSONObject): Task = Task(
@@ -83,7 +89,10 @@ data class Task(
             leadDays = if (o.isNull("lead_days")) null else o.optLong("lead_days"),
             rampDays = if (o.isNull("ramp_days")) null else o.optLong("ramp_days"),
             slots = o.optJSONArray("slots")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } },
+            weekdays = o.optJSONArray("weekdays")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } },
+            backOn = o.optString("back_on").takeIf { !o.isNull("back_on") && it.isNotEmpty() },
             createdAt = o.optLong("created_at"),
+            position = o.optLong("position"),
         )
     }
 
@@ -104,7 +113,17 @@ data class Task(
         .put("lead_days", leadDays ?: JSONObject.NULL)
         .put("ramp_days", rampDays ?: JSONObject.NULL)
         .put("slots", slots?.let { JSONArray(it) } ?: JSONObject.NULL)
+        .put("weekdays", weekdays?.let { JSONArray(it) } ?: JSONObject.NULL)
+        .put("back_on", backOn ?: JSONObject.NULL)
         .put("created_at", createdAt)
+        .put("position", position)
+}
+
+/** A named divider in the user's order; the tasks after it, up to the next, are in it. */
+data class Section(val id: Long, val name: String, val position: Long) {
+    companion object {
+        fun from(o: JSONObject) = Section(o.getLong("id"), o.getString("name"), o.getLong("position"))
+    }
 }
 
 /** One row of the done history, as `GET /api/completions` returns it. */
@@ -161,9 +180,9 @@ object Session {
                 prefs.saveTokens(r.tokens)
                 r.tokens.access
             }
-            Auth.Refreshed.Disconnected -> {
+            is Auth.Refreshed.Disconnected -> {
                 prefs.dropTokens()
-                Log.w(TAG, "refresh: invalid_grant, disconnected")
+                Log.w(TAG, "refresh: invalid_grant (${r.why}), disconnected")
                 null
             }
             is Auth.Refreshed.TryLater -> {
@@ -201,9 +220,30 @@ class Api(private val prefs: Prefs) {
         raw("DELETE", "/api/tasks/$id", null)
     }
 
-    /** Puts the open tasks in this order, first to last; answers the new list. */
-    fun order(ids: List<Long>): List<Task> =
-        taskList(requestArray("PUT", "/api/tasks/order", JSONObject().put("ids", JSONArray(ids))))
+    /** Puts tasks and sections in this order, first to last; answers both lists anew. */
+    fun order(entries: List<Entry>): Pair<List<Task>, List<Section>> {
+        val items = JSONArray(
+            entries.map {
+                when (it) {
+                    is Entry.OfTask -> JSONObject().put("task", it.task.id)
+                    is Entry.OfSection -> JSONObject().put("section", it.section.id)
+                }
+            },
+        )
+        val o = request("PUT", "/api/order", JSONObject().put("items", items))
+        return taskList(o.getJSONArray("tasks")) to sectionList(o.getJSONArray("sections"))
+    }
+
+    fun sections(): List<Section> = sectionList(requestArray("GET", "/api/sections"))
+
+    fun addSection(name: String): Section = Section.from(request("POST", "/api/sections", JSONObject().put("name", name)))
+
+    fun renameSection(id: Long, name: String): Section =
+        Section.from(request("PATCH", "/api/sections/$id", JSONObject().put("name", name)))
+
+    fun deleteSection(id: Long) {
+        raw("DELETE", "/api/sections/$id", null)
+    }
 
     /** Marks a task done. `slot` names the slot to check; null takes the most pressing. */
     fun done(id: Long, slot: String? = null) {
@@ -229,6 +269,8 @@ class Api(private val prefs: Prefs) {
     fun saveSettings(s: DaySettings): DaySettings = DaySettings.from(request("PUT", "/api/settings", s.toJson()))
 
     private fun taskList(arr: JSONArray): List<Task> = (0 until arr.length()).map { Task.from(arr.getJSONObject(it)) }
+
+    private fun sectionList(arr: JSONArray): List<Section> = (0 until arr.length()).map { Section.from(arr.getJSONObject(it)) }
 
     private fun request(method: String, path: String, body: JSONObject? = null): JSONObject {
         val text = raw(method, path, body)

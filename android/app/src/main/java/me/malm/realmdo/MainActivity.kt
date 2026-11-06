@@ -93,7 +93,7 @@ private fun App(vm: TasksViewModel) {
             editor,
             onTry = { s -> routineVm.preview(draft!!.title.ifBlank { "Routine" }, s) },
         )
-        draft != null -> EditorScreen(draft!!, editor, vm, state.slotTimes)
+        draft != null -> EditorScreen(draft!!, editor, vm, state.slotTimes, hasTasks = state.tasks.isNotEmpty())
         showSettings -> SettingsScreen(vm, state, onBack = { showSettings = false })
         else -> Tabs(
             vm,
@@ -116,8 +116,15 @@ private fun Tabs(
     onEdit: (Task) -> Unit,
 ) {
     val done = rememberDone(vm)
-    var tab by rememberSaveable { mutableStateOf(Tab.Today) }
+    var tab by rememberSaveable { mutableStateOf(if (state.placing != null) Tab.Order else Tab.Today) }
+    LaunchedEffect(state.placing) { if (state.placing != null) tab = Tab.Order }
+    // Done, Back or another tab all end placing; the task keeps where it is.
+    val leave = { to: Tab ->
+        if (state.placing != null) vm.placed()
+        tab = to
+    }
     var sheetId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var naming by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.snack) {
         state.snack?.let {
@@ -125,15 +132,20 @@ private fun Tabs(
             snackbar.showSnackbar(it)
         }
     }
-    BackHandler(enabled = tab != Tab.Today) { tab = Tab.Today }
+    BackHandler(enabled = tab != Tab.Today) { leave(Tab.Today) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (tab == Tab.Today) {
+            val (label, onClick) = when {
+                tab == Tab.Today -> "Add" to onAdd
+                tab == Tab.Order && state.placing == null -> "Section" to { naming = true }
+                else -> null to {}
+            }
+            if (label != null) {
                 ExtendedFloatingActionButton(
-                    onClick = onAdd,
+                    onClick = onClick,
                     icon = { Icon(Glyph.Plus, null) },
-                    text = { Text("Add", fontWeight = FontWeight.SemiBold) },
+                    text = { Text(label, fontWeight = FontWeight.SemiBold) },
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 )
@@ -144,7 +156,7 @@ private fun Tabs(
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
-                        onClick = { tab = t },
+                        onClick = { leave(t) },
                         icon = {
                             Icon(
                                 when (t) {
@@ -172,8 +184,14 @@ private fun Tabs(
                 onStart = onStart,
                 onSettings = onSettings,
             )
-            Tab.Order -> OrderScreen(vm, state, pad)
+            Tab.Order -> OrderScreen(vm, state, pad, onPlaced = { leave(Tab.Today) })
             Tab.Done -> HistoryScreen(vm, state, pad)
+        }
+    }
+    if (naming) {
+        SectionNameDialog("New section", "", onDismiss = { naming = false }) { name ->
+            naming = false
+            vm.addSection(name)
         }
     }
     // Looked up by id so the sheet follows refreshes; it closes if the task goes.

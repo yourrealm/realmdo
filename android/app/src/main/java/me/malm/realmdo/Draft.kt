@@ -6,6 +6,9 @@ import org.json.JSONObject
 /** The four slots of a day, in day order, as the API names them. */
 val SLOTS = listOf("morning", "before_lunch", "afternoon", "evening")
 
+/** The days of the week, Monday first, as the API names them. */
+val WEEKDAYS = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
 /** Limits the server enforces, checked here first so the editor can say so. */
 const val MAX_NOTES = 4000
 const val MAX_STEPS = 50
@@ -14,6 +17,7 @@ const val MAX_STEP_SPEECH = 500
 const val MAX_STEP_DETAILS = 2000
 const val MAX_STEP_SECONDS = 6 * 3600
 const val MAX_DAYS = 3650
+const val MAX_SECTION_NAME = 60
 
 /** Days before its due date a one-off shows up, unless it sets its own. */
 const val DEFAULT_LEAD_DAYS = 7
@@ -36,6 +40,8 @@ data class Draft(
     val rampDays: Int? = null,
     /** Slot: which slots of the day. */
     val slots: Set<String> = emptySet(),
+    /** Slot: the weekdays it is on. All seven is every day. */
+    val weekdays: Set<String> = WEEKDAYS.toSet(),
     val notes: String = "",
     val steps: List<Step> = emptyList(),
 ) {
@@ -46,6 +52,7 @@ data class Draft(
         get() = when {
             title.isBlank() -> "Give it a title."
             kind == "slot" && slots.isEmpty() -> "Pick at least one time of day."
+            kind == "slot" && weekdays.isEmpty() -> "Pick at least one day."
             notes.length > MAX_NOTES -> "Notes are limited to $MAX_NOTES characters."
             else -> null
         }
@@ -61,6 +68,7 @@ data class Draft(
             "once" -> o.put("due_on", dueOn ?: JSONObject.NULL).put("lead_days", leadDays ?: JSONObject.NULL)
             "interval" -> o.put("after_days", afterDays).put("ramp_days", rampDays ?: JSONObject.NULL)
             "slot" -> o.put("slots", JSONArray(SLOTS.filter { it in slots }))
+                .put("weekdays", if (weekdays.size == WEEKDAYS.size) JSONObject.NULL else JSONArray(WEEKDAYS.filter { it in weekdays }))
         }
         o.put("notes", notes.trim().ifEmpty { null } ?: JSONObject.NULL)
         o.put("steps", if (steps.isEmpty()) JSONObject.NULL else JSONArray(steps.map { it.toJson() }))
@@ -77,6 +85,7 @@ data class Draft(
             afterDays = (t.afterDays ?: 3).toInt(),
             rampDays = t.rampDays?.toInt(),
             slots = t.slots.orEmpty().toSet(),
+            weekdays = (t.weekdays ?: WEEKDAYS).toSet(),
             notes = t.notes.orEmpty(),
             steps = t.steps.orEmpty(),
         )

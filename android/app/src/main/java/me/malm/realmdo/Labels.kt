@@ -99,30 +99,46 @@ fun announcement(step: Step): String =
 fun headsUp(next: Step): String = "10 seconds to ${next.title.trimEnd('.', ' ')}."
 
 /**
- * Why a task is out of the list for now, for the order screen: "back in 2 d",
- * "done for today". Null when it is showing.
+ * Why a task is out of the list for now, for the order screen and the sheet:
+ * "back tomorrow", "back Wednesday", "later today". Null when it is showing.
  */
-fun hiddenLabel(
-    t: Task,
-    today: LocalDate = LocalDate.now(),
-    zone: ZoneId = ZoneId.systemDefault(),
-): String? {
+fun hiddenLabel(t: Task, today: LocalDate = LocalDate.now()): String? {
     if (t.urgency >= 0) return null
-    return when (t.kind) {
-        "interval" -> {
-            val from = Instant.ofEpochSecond(t.lastDoneAt ?: t.createdAt).atZone(zone).toLocalDate()
-            val days = ChronoUnit.DAYS.between(today, from.plusDays(t.afterDays ?: 0))
-            when {
-                days <= 0L -> "back today"
-                days == 1L -> "back tomorrow"
-                else -> "back in $days d"
-            }
-        }
-        "slot" -> if (t.pendingSlot == null) "done for today" else "later today"
-        else -> t.dueOn?.let { "due ${dueLabel(it, today)}" } ?: "hidden"
+    t.backOn?.let { return "back ${backDay(it, today)}" }
+    return when {
+        t.kind != "slot" -> "hidden"
+        t.pendingSlot == null -> "done for today"
+        else -> "later today"
     }
 }
 
+/** "tomorrow", "Wednesday" within the week, else "Thu 19 Nov". */
+fun backDay(backOn: String, today: LocalDate = LocalDate.now()): String {
+    val day = LocalDate.parse(backOn)
+    return when (ChronoUnit.DAYS.between(today, day)) {
+        0L -> "today"
+        1L -> "tomorrow"
+        in 2L..6L -> WEEKDAY.format(day)
+        else -> SHORT_DATE.format(day)
+    }
+}
+
+/** The short day at the start of a Coming up row: "Wed", "19 Nov". */
+fun backTag(backOn: String, today: LocalDate = LocalDate.now()): String {
+    val day = LocalDate.parse(backOn)
+    return if (ChronoUnit.DAYS.between(today, day) in 0L..6L) WEEKDAY_SHORT.format(day) else DAY_MONTH.format(day)
+}
+
+/** "Mo We Fr" for a slot task on some days; null when it is every day. */
+fun weekdaysLabel(days: Collection<String>?): String? =
+    days?.takeIf { it.size < WEEKDAYS.size }?.let { d -> WEEKDAYS.filter { it in d }.joinToString(" ") { dayShort(it) } }
+
+/** "Mo" for "mon". */
+fun dayShort(day: String): String = day.take(2).replaceFirstChar { it.uppercase() }
+
+private val WEEKDAY = DateTimeFormatter.ofPattern("EEEE", Locale.ENGLISH)
+private val WEEKDAY_SHORT = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
+private val DAY_MONTH = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
 private val DAY_HEADING = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.ENGLISH)
 private val SHORT_DATE = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)
 private val CLOCK = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH)

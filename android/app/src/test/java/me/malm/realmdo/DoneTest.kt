@@ -41,7 +41,7 @@ class DoneTest {
         assertEquals("evening", after.pendingSlot)
         assertEquals(-0.5, after.urgency, 0.0)
         assertFalse(after.important)
-        assertTrue(isLater(after))
+        assertEquals(listOf(after), laterToday(listOf(after)))
     }
 
     @Test
@@ -62,7 +62,44 @@ class DoneTest {
         val after = afterDone(listOf(t), t, NOW).single()
         assertNull(after.pendingSlot)
         assertEquals(-1.0, after.urgency, 0.0)
-        assertFalse(isLater(after))
+        assertTrue(laterToday(listOf(after)).isEmpty())
+        assertTrue(comingUp(listOf(after)).isEmpty())
+    }
+
+    @Test
+    fun placingMovesTheNewTaskIntoAGapOfTheOthers() {
+        val ids = listOf(9L, 1L, 2L, 3L)
+        assertEquals(listOf(9L, 1L, 2L, 3L), placeAt(ids, 9L, 0))
+        assertEquals(listOf(1L, 9L, 2L, 3L), placeAt(ids, 9L, 1))
+        assertEquals(listOf(1L, 2L, 3L, 9L), placeAt(ids, 9L, 3))
+        assertEquals(listOf(9L, 1L, 2L, 3L), placeAt(listOf(1L, 2L, 9L, 3L), 9L, 0))
+    }
+
+    @Test
+    fun sectionsSitOnOneLineWithTasks() {
+        val a = task(1, "once").copy(position = 0)
+        val b = task(2, "once", urgency = -1.0).copy(position = 2)
+        val c = task(3, "once").copy(position = 3)
+        val morning = Section(10, "Morning", 1)
+        val empty = Section(11, "Empty", 3)
+        val list = entries(listOf(a, b, c), listOf(empty, morning))
+        assertEquals(listOf<Any>(1L, "s10", 2L, "s11", 3L), list.map { it.key })
+        assertEquals(mapOf(10L to listOf(b), 11L to listOf(c)), sectionTasks(list))
+        assertEquals(listOf<Any>(1L, "s10", "s11", 3L), visible(list, folded = setOf(10L)).map { it.key })
+        assertEquals(listOf<Any>(1L, "s10", 2L, "s11", 3L), visible(list, setOf(10L), keep = 2L).map { it.key })
+        val (tasks, sections) = positioned(list)
+        assertEquals(listOf(0L, 2L, 4L), tasks.map { it.position })
+        assertEquals(listOf(1L, 3L), sections.map { it.position })
+    }
+
+    @Test
+    fun anOffDayStaysHiddenWhenCheckedAnyway() {
+        val t = task(1, "slot", urgency = -1.0, today = listOf("morning" to "overdue"), pendingSlot = "morning")
+            .copy(weekdays = listOf("mon", "wed"), backOn = "2026-11-11")
+        val after = afterDone(listOf(t), t, NOW).single()
+        assertEquals(listOf("morning" to "done"), after.today)
+        assertEquals(-1.0, after.urgency, 0.0)
+        assertEquals(listOf(after), comingUp(listOf(after)))
     }
 
     @Test

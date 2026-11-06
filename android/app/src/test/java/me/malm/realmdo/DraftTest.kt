@@ -98,18 +98,50 @@ class DraftTest {
 
     @Test
     fun hiddenLabelsSayWhenATaskComesBack() {
-        val today = LocalDate.of(2026, 9, 17)
-        val doneOn = today.minusDays(4).atStartOfDay(ZoneOffset.UTC).toEpochSecond()
+        val today = LocalDate.of(2026, 11, 10) // a Tuesday
         val t = Task(
-            id = 1, title = "Water plants", kind = "interval", dueOn = null, afterDays = 6, lastDoneAt = doneOn,
-            urgency = -0.3, important = false, today = null, pendingSlot = null, notes = null,
+            id = 1, title = "Water plants", kind = "interval", dueOn = null, afterDays = 6, lastDoneAt = null,
+            urgency = -0.3, important = false, today = null, pendingSlot = null, notes = null, backOn = "2026-11-11",
         )
-        assertEquals("back in 2 d", hiddenLabel(t, today, ZoneOffset.UTC))
-        assertEquals("back tomorrow", hiddenLabel(t.copy(afterDays = 5), today, ZoneOffset.UTC))
-        assertNull(hiddenLabel(t.copy(urgency = 0.0), today, ZoneOffset.UTC))
-        val slot = t.copy(kind = "slot", afterDays = null)
-        assertEquals("done for today", hiddenLabel(slot, today, ZoneOffset.UTC))
-        assertEquals("later today", hiddenLabel(slot.copy(pendingSlot = "evening"), today, ZoneOffset.UTC))
+        assertEquals("back tomorrow", hiddenLabel(t, today))
+        assertEquals("back Saturday", hiddenLabel(t.copy(backOn = "2026-11-14"), today))
+        assertEquals("back Tue 17 Nov", hiddenLabel(t.copy(backOn = "2026-11-17"), today))
+        assertNull(hiddenLabel(t.copy(urgency = 0.0), today))
+        val slot = t.copy(kind = "slot", afterDays = null, backOn = null)
+        assertEquals("done for today", hiddenLabel(slot, today))
+        assertEquals("later today", hiddenLabel(slot.copy(pendingSlot = "evening"), today))
+        assertEquals("Wed", backTag("2026-11-11", today))
+        assertEquals("17 Nov", backTag("2026-11-17", today))
+    }
+
+    @Test
+    fun weekdaysGoMondayFirstAndAllSevenIsEveryDay() {
+        val gym = Draft(title = "Gym", kind = "slot", slots = setOf("morning"), weekdays = setOf("fri", "mon", "wed"))
+        val arr = gym.toJson().getJSONArray("weekdays")
+        assertEquals(listOf("mon", "wed", "fri"), (0 until arr.length()).map { arr.getString(it) })
+        assertTrue(Draft(title = "Teeth", kind = "slot", slots = setOf("morning")).toJson().isNull("weekdays"))
+        assertEquals("Pick at least one day.", gym.copy(weekdays = emptySet()).problem)
+        assertFalse(Draft(title = "Once").toJson().has("weekdays"))
+        assertEquals("Mo We Fr", weekdaysLabel(listOf("mon", "wed", "fri")))
+        assertNull(weekdaysLabel(null))
+    }
+
+    @Test
+    fun laterTodayAndComingUpSplitTheHiddenTasks() {
+        fun t(id: Long, kind: String, pending: String? = null, back: String? = null, urgency: Double = -0.5) = Task(
+            id = id, title = "t$id", kind = kind, dueOn = null, afterDays = null, lastDoneAt = null,
+            urgency = urgency, important = false, today = null, pendingSlot = pending, notes = null, backOn = back,
+        )
+        val tasks = listOf(
+            t(1, "slot", pending = "evening"),
+            t(2, "interval", back = "2026-11-14"),
+            t(3, "slot", pending = "afternoon"),
+            t(4, "slot", pending = "morning", back = "2026-11-11", urgency = -1.0),
+            t(5, "slot", urgency = -1.0), // done for today
+            t(6, "once", urgency = 0.5),
+        )
+        assertEquals(listOf(3L, 1L), laterToday(tasks).map { it.id })
+        assertEquals(listOf(4L, 2L), comingUp(tasks).map { it.id })
     }
 
     @Test

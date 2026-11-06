@@ -52,6 +52,11 @@ class Prefs(context: Context) {
         get() = sp.getLong("refresh_held", 0)
         set(v) = sp.edit { putLong("refresh_held", v) }
 
+    /** Sections folded on the Order screen: this phone's view only. */
+    var foldedSections: Set<Long>
+        get() = sp.getStringSet("folded_sections", emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
+        set(v) = sp.edit { putStringSet("folded_sections", v.map { it.toString() }.toSet()) }
+
     /** When the app last came to the foreground. */
     var lastResume: Long
         get() = sp.getLong("last_resume", 0)

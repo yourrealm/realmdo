@@ -78,8 +78,8 @@ object Auth {
     sealed interface Refreshed {
         class Done(val tokens: Tokens) : Refreshed
 
-        /** `invalid_grant`: the connection is gone, so drop the tokens. */
-        data object Disconnected : Refreshed
+        /** `invalid_grant`: the connection is gone, so drop the tokens. [why] is Home's description, for the log. */
+        data class Disconnected(val why: String) : Refreshed
 
         /** Phone apps turned off, Home starting, or anything else: keep the tokens. [why] is for the log. */
         data class TryLater(val why: String) : Refreshed
@@ -89,7 +89,7 @@ object Auth {
         val json = runCatching { JSONObject(body) }.getOrNull()
         return when {
             status == 200 && json != null -> Refreshed.Done(Tokens.from(json, nowMs))
-            json?.optString("error") == "invalid_grant" -> Refreshed.Disconnected
+            json?.optString("error") == "invalid_grant" -> Refreshed.Disconnected(json.optString("error_description"))
             else -> Refreshed.TryLater("HTTP $status ${json?.optString("error").orEmpty()}".trim())
         }
     }
